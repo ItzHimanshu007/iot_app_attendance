@@ -73,13 +73,3 @@ class VerificationError(AppError):
 
     def __init__(self, message: str, code: str) -> None:
         super().__init__(message, code, 422)
-
-
-# ── 5xx ───────────────────────────────────────────────────────────────────────
-
-
-class ExternalServiceError(AppError):
-    """An external dependency (Supabase) failed (502)."""
-
-    def __init__(self, service: str, detail: str) -> None:
-        super().__init__(f"{service}: {detail}", "EXTERNAL_ERROR", 502)

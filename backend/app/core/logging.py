@@ -3,7 +3,7 @@
 Usage:
     from app.core.logging import get_logger
     logger = get_logger(__name__)
-    logger.info("action", user_id="abc", session_id="xyz")
+    logger.info("action", staff_id="abc", beacon_id="xyz")
 """
 
 from __future__ import annotations

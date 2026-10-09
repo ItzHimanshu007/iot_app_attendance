@@ -7,7 +7,6 @@ import '../../core/formatters.dart';
 import '../../core/theme/colors.dart';
 import '../../shared/widgets.dart';
 import '../auth/models.dart';
-import '../auth/session.dart';
 import '../beacon/beacon_controller.dart';
 import 'attendance_api.dart';
 import 'mark_attendance.dart';
@@ -292,6 +291,3 @@ class _ActionButton extends ConsumerWidget {
     );
   }
 }
-
-/// Reloads `/me` (used after onboarding steps).
-Future<void> reloadMe(WidgetRef ref) => ref.read(meProvider.notifier).reload();
