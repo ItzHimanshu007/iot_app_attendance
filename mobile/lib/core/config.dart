@@ -42,7 +42,9 @@ class AppConfig {
 
   // ── Face recognition ───────────────────────────────────────────────────────
   static const String faceModelAsset = 'assets/models/mobilefacenet.tflite';
-  static const String faceModelVersion = 'mobilefacenet-112-v1';
+  // v2: face cropped from the live preview frame + brightness normalisation.
+  // Signatures from different versions don't mix; the backend asks to re-enroll.
+  static const String faceModelVersion = 'mobilefacenet-112-v2';
   static const int enrollSamples = 3;
   static const Duration livenessTimeout = Duration(seconds: 60);
 }

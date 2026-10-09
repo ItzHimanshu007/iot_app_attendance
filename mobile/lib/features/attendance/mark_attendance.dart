@@ -47,7 +47,9 @@ Future<void> markAttendance(BuildContext context, WidgetRef ref, String action) 
     );
   } catch (e) {
     close();
-    if (context.mounted) await showVerificationError(context, e);
+    if (context.mounted && await showVerificationError(context, e, allowRetry: true)) {
+      if (context.mounted) return markAttendance(context, ref, action);
+    }
     return;
   }
   close();
@@ -96,7 +98,10 @@ Future<void> markAttendance(BuildContext context, WidgetRef ref, String action) 
     }
   } catch (e) {
     close2();
-    if (context.mounted) await showVerificationError(context, e);
+    if (context.mounted && await showVerificationError(context, e, allowRetry: true)) {
+      // A fresh challenge with new liveness steps; the old one is used up.
+      if (context.mounted) return markAttendance(context, ref, action);
+    }
   }
 }
 
@@ -196,9 +201,16 @@ class VerificationProgressDialog extends StatelessWidget {
 
 // ── Error sheet ───────────────────────────────────────────────────────────────
 
-Future<void> showVerificationError(BuildContext context, Object error) {
+/// Explains why verification failed. With [allowRetry], errors the staff member
+/// can fix by trying again get a "Try again" button; returns true if pressed.
+Future<bool> showVerificationError(
+  BuildContext context,
+  Object error, {
+  bool allowRetry = false,
+}) async {
   final text = ErrorText.of(error);
-  return showModalBottomSheet<void>(
+  final retry = allowRetry && ErrorText.canRetry(error);
+  final again = await showModalBottomSheet<bool>(
     context: context,
     builder: (ctx) => SafeArea(
       child: Padding(
@@ -223,13 +235,25 @@ Future<void> showVerificationError(BuildContext context, Object error) {
             const SizedBox(height: 20),
             SizedBox(
               width: double.infinity,
-              child: FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK')),
+              child: retry
+                  ? FilledButton.icon(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('Try again'),
+                    )
+                  : FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK')),
             ),
+            if (retry)
+              SizedBox(
+                width: double.infinity,
+                child: TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+              ),
           ],
         ),
       ),
     ),
   );
+  return again ?? false;
 }
 
 // ── Success screen ────────────────────────────────────────────────────────────

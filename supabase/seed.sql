@@ -12,7 +12,7 @@ set campus_name          = 'SKIT Jaipur',
     geofence_mode        = 'flag',      -- 'off' | 'flag' | 'enforce'
     work_start_time      = '09:00',
     late_grace_minutes   = 15,
-    face_match_threshold = 0.60
+    face_match_threshold = 0.55
 where id = 1;
 
 -- 2. Make yourself the first admin.

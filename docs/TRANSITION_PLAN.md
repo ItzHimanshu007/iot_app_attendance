@@ -13,7 +13,7 @@ impractical.
 | PS 23 requirement | How it is met |
 |---|---|
 | 1. Live image capture | Front camera opened by the app (`camera` plugin, live preview only). |
-| 2. No gallery uploads | The app has **no** image-picker / gallery code path at all. Frames are taken from the live camera and the temporary JPEG is deleted immediately. |
+| 2. No gallery uploads | The app has **no** image-picker / gallery code path at all. The face is cut out of the live camera preview frame in memory; no photo file is ever created. |
 | 3. Facial recognition | On-device MobileFaceNet (TFLite) turns the face into a 192-number signature. Only that signature is sent; the **photo never leaves the phone**. The server compares it with the enrolled signature. |
 | 4. Campus verification | **BLE beacon (ESP32) in range is mandatory**, with a rotating HMAC token that changes every 30 s, plus **GPS geofence** against the campus latitude/longitude/radius (mode `flag` or `enforce`) and fake-GPS detection. |
 | 5. Proxy prevention | One phone per staff member (device binding), random liveness challenge (blink / smile / turn head), one-time server challenge, duplicate-face check at enrollment, admin approval, emulator block, and an audit log of every failed attempt. |
@@ -36,7 +36,7 @@ Daily use
        1. POST /attendance/challenge   (server checks beacon token + device + state)
           ◄─ challenge_id + 2 random liveness steps (e.g. "blink", "turn_head")
        2. Camera opens → user performs the steps → one frame is captured
-          → MobileFaceNet signature computed on the phone → JPEG deleted
+          → face cut from the live preview frame in memory → MobileFaceNet signature (no photo file)
        3. GPS fix (with mock-location flag)
        4. POST /attendance/submit       (face match, liveness, beacon, geofence, device)
           ◄─ present / late  (or a precise rejection reason)
@@ -141,7 +141,7 @@ table: staff can read their own profile/device/attendance, and sensitive tables
 | Friend forwards a screenshot of the beacon token | Token rotates every 30 s, is bound to the beacon ID, and the challenge expires in 2 minutes. Face + device are still required. |
 | Fake GPS app | `isMocked` → rejected (`MOCK_LOCATION`) |
 | Friend uses your phone | Face match fails |
-| Holding up your photo/video | Random liveness steps chosen by the server, and the face tracking ID must stay the same through the whole challenge |
+| Holding up your photo/video | Random liveness steps chosen by the server, the face must stay the same through the whole challenge, and the face captured at the end must match the face that did the steps (signature check on the phone) |
 | Friend logs into your account on their phone | Device binding (one phone, admin reset needed to change) |
 | Friend enrolls *their* face on your account | Admin approval + duplicate-face check against every other approved staff member |
 | Replaying an old request | One-time challenge, consumed atomically |

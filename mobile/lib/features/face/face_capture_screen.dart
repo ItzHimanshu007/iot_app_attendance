@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:io';
-import 'dart:isolate';
 import 'dart:math' as math;
 
 import 'package:camera/camera.dart';
@@ -8,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:screen_brightness/screen_brightness.dart';
 
 import '../../core/api_exception.dart';
 import '../../core/config.dart';
@@ -28,11 +27,15 @@ class FaceCaptureResult {
   final List<String> completedSteps;
 }
 
-/// Live camera → liveness steps → capture → on-device face signature.
+/// Live camera → liveness steps → face signature, all on the phone.
 ///
-/// There is deliberately no gallery/file picker anywhere in this app. The
-/// captured JPEG lives in the app's temporary folder for well under a second
-/// and is deleted right after the signature is computed.
+/// The face is cut out of the live preview frame that is already in memory and
+/// turned into a 192-number signature. No photo is taken, nothing is written
+/// to storage, and there is no gallery or file picker anywhere in the app.
+///
+/// Built for cheap phones: it works on 480p preview frames, turns the screen
+/// into a fill light when the face is dark, tolerates ML Kit briefly losing the
+/// face, and says why if the camera never delivers usable frames.
 class FaceCaptureScreen extends StatefulWidget {
   const FaceCaptureScreen({
     super.key,
@@ -41,6 +44,7 @@ class FaceCaptureScreen extends StatefulWidget {
     this.samples = 1,
     this.deadline,
     @visibleForTesting this.previewOnly = false,
+    @visibleForTesting this.previewFillLight = false,
   });
 
   final FaceCaptureMode mode;
@@ -50,6 +54,9 @@ class FaceCaptureScreen extends StatefulWidget {
 
   /// Renders the UI without opening the camera (screenshots/tests only).
   final bool previewOnly;
+
+  /// With [previewOnly]: show the low-light (white fill light) look.
+  final bool previewFillLight;
 
   static Future<FaceCaptureResult?> open(
     BuildContext context, {
@@ -88,16 +95,26 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
     DeviceOrientation.landscapeRight: 270,
   };
 
-  final _streamDetector = FaceDetector(
+  /// Face darker than this (average luma, 0–255) → white screen as a fill light.
+  static const _fillLightLuma = 70.0;
+
+  /// Face crops darker than this are not used.
+  static const _tooDarkLuma = 35.0;
+
+  /// The face captured at the end must match the face that did the liveness
+  /// steps at least this well. The same person seconds apart scores far higher;
+  /// two different people almost never reach it. This catches a photo swap.
+  static const _sameFaceSimilarity = 0.4;
+
+  static const _darkPrompt = 'Too dark. Face a light or move to a brighter place';
+
+  final _detector = FaceDetector(
     options: FaceDetectorOptions(
       enableClassification: true,
       enableTracking: true,
       performanceMode: FaceDetectorMode.fast,
       minFaceSize: 0.15,
     ),
-  );
-  final _photoDetector = FaceDetector(
-    options: FaceDetectorOptions(performanceMode: FaceDetectorMode.accurate, minFaceSize: 0.15),
   );
 
   late final LivenessTracker _liveness;
@@ -106,6 +123,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
   CameraDescription? _camera;
   FaceEmbedder? _embedder;
   Timer? _ticker;
+  Timer? _watchdog;
 
   _Phase _phase = _Phase.starting;
   String _prompt = 'Starting camera…';
@@ -113,9 +131,19 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
   bool _busyFrame = false;
   bool _finished = false;
   int _steadyFrames = 0;
-  int? _livenessFaceId;
+  DateTime? _nextSampleAt;
   _Ring _ring = _Ring.neutral;
+  bool _fillLight = false;
+  bool _brightnessChanged = false;
+  int _darkFrames = 0;
+  List<double>? _anchor;
   final List<List<double>> _embeddings = [];
+
+  // Diagnostics for the watchdog.
+  int _framesSeen = 0;
+  int _framesDone = 0;
+  String? _unsupportedFormat;
+  Object? _lastFrameError;
 
   @override
   void initState() {
@@ -135,8 +163,11 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
     });
     if (widget.previewOnly) {
       _phase = _Phase.liveness;
-      _prompt = _liveness.current?.instruction ?? 'Look straight at the camera';
-      _ring = _Ring.ok;
+      _fillLight = widget.previewFillLight;
+      _prompt = widget.previewFillLight
+          ? _darkPrompt
+          : (_liveness.current?.instruction ?? 'Look straight at the camera');
+      _ring = widget.previewFillLight ? _Ring.warn : _Ring.ok;
       return;
     }
     _start();
@@ -146,10 +177,13 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _ticker?.cancel();
+    _watchdog?.cancel();
     _controller?.dispose();
-    _streamDetector.close();
-    _photoDetector.close();
+    _detector.close();
     _embedder?.close();
+    if (_brightnessChanged) {
+      ScreenBrightness.instance.resetApplicationScreenBrightness().catchError((_) {});
+    }
     super.dispose();
   }
 
@@ -172,6 +206,8 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
       if (front.isEmpty) throw Exception('No front camera found on this phone.');
       _camera = front.first;
 
+      // 480p preview: enough detail for a 112 px face signature and light
+      // enough for slow phones to analyse several frames per second.
       final controller = CameraController(
         _camera!,
         ResolutionPreset.medium,
@@ -192,34 +228,62 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
         _prompt = _liveness.current?.instruction ?? 'Look straight at the camera';
       });
       await controller.startImageStream(_onFrame);
+      _watchdog = Timer(const Duration(seconds: 8), _checkFramesArrive);
     } catch (e) {
       _fail(errorMessage(e));
     }
   }
 
+  /// Fails with a clear reason instead of waiting forever on a phone whose
+  /// camera or face detector does not work with this app.
+  void _checkFramesArrive() {
+    if (_framesDone > 0 || _finished || _phase == _Phase.failed) return;
+    final String reason;
+    if (_framesSeen == 0) {
+      reason =
+          'The camera is not sending pictures. Close other apps using the camera and try again.';
+    } else if (_unsupportedFormat != null) {
+      reason =
+          'This phone\'s camera format ($_unsupportedFormat) is not supported. '
+          'Please tell the administrator.';
+    } else {
+      final detail = _lastFrameError == null ? '' : ' (${errorMessage(_lastFrameError!)})';
+      reason = 'Face detection is not working on this phone$detail. Restart the app and try again.';
+    }
+    _fail(reason);
+  }
+
   // ── Frame loop ──────────────────────────────────────────────────────────────
 
   Future<void> _onFrame(CameraImage image) async {
+    _framesSeen++;
     if (_busyFrame || _finished || _phase == _Phase.capturing || _phase == _Phase.failed) return;
     _busyFrame = true;
     try {
-      final input = _toInputImage(image);
-      if (input == null) return;
-      final faces = await _streamDetector.processImage(input);
-      if (!mounted) return;
-      _handleFaces(faces, math.min(image.width, image.height).toDouble());
-    } catch (_) {
-      // a dropped frame is harmless
+      final frame = _toFrame(image);
+      if (frame == null) return;
+      final faces = await _detector.processImage(_toInputImage(frame));
+      _framesDone++;
+      if (!mounted || _finished || _phase == _Phase.failed) return;
+      _handleFaces(frame, faces);
+    } catch (e) {
+      _lastFrameError = e; // a dropped frame is harmless; the watchdog reports persistent errors
     } finally {
       _busyFrame = false;
     }
   }
 
-  void _handleFaces(List<Face> faces, double shortSide) {
+  void _handleFaces(Nv21Frame frame, List<Face> faces) {
+    final now = DateTime.now();
     if (faces.isEmpty) {
       _steadyFrames = 0;
       _ring = _Ring.warn;
-      return _setPrompt('Place your face inside the oval');
+      // In the dark ML Kit often finds no face at all: check the light in the oval.
+      final w = frame.uprightWidth.toDouble();
+      final h = frame.uprightHeight.toDouble();
+      final luma = frame.meanLuma(w * 0.25, h * 0.2, w * 0.5, h * 0.5);
+      _trackLight(luma);
+      return _setPrompt(luma < _tooDarkLuma ? _darkPrompt : 'Place your face inside the oval');
     }
     if (faces.length > 1) {
       _steadyFrames = 0;
@@ -227,116 +291,158 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
       return _setPrompt('Only your face should be visible');
     }
     final face = faces.first;
-    if (face.boundingBox.width < shortSide * 0.28) {
+    final box = face.boundingBox;
+    if (box.width < math.min(frame.width, frame.height) * 0.28) {
       _steadyFrames = 0;
       _ring = _Ring.warn;
       return _setPrompt('Move a little closer');
     }
+    final luma = frame.meanLuma(box.left, box.top, box.width, box.height);
+    _trackLight(luma);
+
+    if (!_liveness.sameFace(face, now)) return _restartSteps();
 
     if (_phase == _Phase.liveness) {
       _ring = _Ring.ok;
-      if (_liveness.update(face)) HapticFeedback.lightImpact();
-      _livenessFaceId = face.trackingId ?? _livenessFaceId;
+      // Remember who is doing the steps, to compare with the final capture.
+      if (_anchor == null && luma >= _tooDarkLuma && LivenessTracker.isGoodCaptureFrame(face)) {
+        _anchor = _signature(frame, box)?.$1;
+      }
+      if (_liveness.update(face, now)) HapticFeedback.lightImpact();
       if (_liveness.isDone) {
         _phase = _Phase.steady;
         return _setPrompt('Great! Now look straight at the camera');
       }
-      return _setPrompt(_liveness.current!.instruction);
+      return _setPrompt(luma < _tooDarkLuma ? _darkPrompt : _liveness.current!.instruction);
     }
 
-    // Steady phase: the same tracked face must still be in front of the camera.
-    if (_livenessFaceId != null && face.trackingId != null && face.trackingId != _livenessFaceId) {
-      _liveness.reset();
-      _livenessFaceId = null;
-      _phase = _liveness.isDone ? _Phase.steady : _Phase.liveness;
-      return _setPrompt('Face changed — please repeat the steps');
-    }
-    if (LivenessTracker.isGoodCaptureFrame(face)) {
-      _ring = _Ring.good;
-      _steadyFrames++;
-      _setPrompt('Hold still…');
-      if (_steadyFrames >= 3) _capture();
-    } else {
+    // Steady phase: frontal, eyes open, enough light, held for a few frames.
+    if (!LivenessTracker.isGoodCaptureFrame(face)) {
       _steadyFrames = 0;
       _ring = _Ring.neutral;
-      _setPrompt('Look straight at the camera with your eyes open');
+      return _setPrompt('Look straight at the camera with your eyes open');
     }
+    if (luma < _tooDarkLuma) {
+      _steadyFrames = 0;
+      _ring = _Ring.warn;
+      return _setPrompt(_darkPrompt);
+    }
+    _ring = _Ring.good;
+    if (_nextSampleAt != null && now.isBefore(_nextSampleAt!)) return;
+    _steadyFrames++;
+    _setPrompt('Hold still…');
+    if (_steadyFrames >= 3) _capture(frame, box);
   }
 
-  InputImage? _toInputImage(CameraImage image) {
+  /// A different face appeared: everything done so far is discarded.
+  void _restartSteps() {
+    _anchor = null;
+    _embeddings.clear();
+    _steadyFrames = 0;
+    _ring = _Ring.warn;
+    _phase = _liveness.isDone ? _Phase.steady : _Phase.liveness;
+    _setPrompt('Face changed. Please repeat the steps');
+  }
+
+  int? _rotation() {
     final camera = _camera;
     final controller = _controller;
     if (camera == null || controller == null) return null;
-    var rotation = _orientations[controller.value.deviceOrientation];
+    final device = _orientations[controller.value.deviceOrientation];
+    if (device == null) return null;
+    return camera.lensDirection == CameraLensDirection.front
+        ? (camera.sensorOrientation + device) % 360
+        : (camera.sensorOrientation - device + 360) % 360;
+  }
+
+  /// The frame as packed NV21, whatever layout this phone's camera delivers.
+  Nv21Frame? _toFrame(CameraImage image) {
+    final rotation = _rotation();
     if (rotation == null) return null;
-    rotation = camera.lensDirection == CameraLensDirection.front
-        ? (camera.sensorOrientation + rotation) % 360
-        : (camera.sensorOrientation - rotation + 360) % 360;
-    final inputRotation = InputImageRotationValue.fromRawValue(rotation);
-    final format = InputImageFormatValue.fromRawValue(image.format.raw as int);
-    if (inputRotation == null || format != InputImageFormat.nv21 || image.planes.length != 1) {
+    final w = image.width;
+    final h = image.height;
+    final planes = image.planes;
+    Uint8List? bytes;
+    if (planes.length == 1 && image.format.group == ImageFormatGroup.nv21) {
+      final p = planes.first;
+      final stride = p.bytesPerRow;
+      if (stride == w && p.bytes.length >= w * h * 3 ~/ 2) {
+        bytes = p.bytes;
+      } else if (stride > w && p.bytes.length >= stride * (h * 3 ~/ 2 - 1) + w) {
+        bytes = Uint8List(w * h * 3 ~/ 2);
+        for (var row = 0; row < h * 3 ~/ 2; row++) {
+          bytes.setRange(row * w, row * w + w, p.bytes, row * stride);
+        }
+      }
+    } else if (planes.length == 3) {
+      bytes = Nv21Frame.yuv420ToNv21(
+        width: w,
+        height: h,
+        y: planes[0].bytes,
+        yRowStride: planes[0].bytesPerRow,
+        u: planes[1].bytes,
+        v: planes[2].bytes,
+        uvRowStride: planes[1].bytesPerRow,
+        uvPixelStride: planes[1].bytesPerPixel ?? 1,
+      );
+    }
+    if (bytes == null) {
+      _unsupportedFormat = '${image.format.group.name}, ${planes.length} plane(s)';
       return null;
     }
-    final plane = image.planes.first;
-    return InputImage.fromBytes(
-      bytes: plane.bytes,
-      metadata: InputImageMetadata(
-        size: Size(image.width.toDouble(), image.height.toDouble()),
-        rotation: inputRotation,
-        format: format!,
-        bytesPerRow: plane.bytesPerRow,
-      ),
-    );
+    return Nv21Frame(bytes: bytes, width: w, height: h, rotation: rotation);
   }
+
+  InputImage _toInputImage(Nv21Frame frame) => InputImage.fromBytes(
+    bytes: frame.bytes,
+    metadata: InputImageMetadata(
+      size: Size(frame.width.toDouble(), frame.height.toDouble()),
+      rotation:
+          InputImageRotationValue.fromRawValue(frame.rotation) ?? InputImageRotation.rotation0deg,
+      format: InputImageFormat.nv21,
+      bytesPerRow: frame.width,
+    ),
+  );
 
   // ── Capture ─────────────────────────────────────────────────────────────────
 
-  Future<void> _capture() async {
-    final controller = _controller;
+  /// Face signature and crop brightness from the frame in memory.
+  (List<double>, double)? _signature(Nv21Frame frame, Rect box) {
     final embedder = _embedder;
-    if (controller == null || embedder == null || _phase == _Phase.capturing) return;
-    setState(() {
-      _phase = _Phase.capturing;
-      _prompt = 'Capturing…';
-    });
+    if (embedder == null) return null;
+    final crop = cropFace(frame, box.left, box.top, box.width, box.height, embedder.inputSize);
+    if (crop == null) return null;
+    return (embedder.embed(crop.pixels), crop.meanLuma);
+  }
 
-    XFile? shot;
+  void _capture(Nv21Frame frame, Rect box) {
+    _phase = _Phase.capturing;
     try {
-      await controller.stopImageStream();
-      shot = await controller.takePicture();
-      final faces = await _photoDetector.processImage(InputImage.fromFilePath(shot.path));
-      if (faces.length != 1) {
-        throw const _RetryCapture('Keep only your face in view and hold still.');
+      final result = _signature(frame, box);
+      if (result == null) throw const _RetryCapture('Move your face to the centre of the oval');
+      final (signature, luma) = result;
+      if (luma < _tooDarkLuma) {
+        _enableFillLight();
+        throw const _RetryCapture(_darkPrompt);
       }
-      final box = faces.first.boundingBox;
-      final request = FaceCropRequest(
-        path: shot.path,
-        left: box.left,
-        top: box.top,
-        width: box.width,
-        height: box.height,
-        size: embedder.inputSize,
-      );
-      final pixels = await Isolate.run(() => preprocessFace(request));
-      if (pixels == null) {
-        throw const _RetryCapture('Could not read your face. Try again in better light.');
+      final anchor = _anchor;
+      if (anchor != null && _similarity(anchor, signature) < _sameFaceSimilarity) {
+        _liveness.reset();
+        return _restartSteps();
       }
-      _embeddings.add(embedder.embed(pixels));
+      _anchor ??= signature;
+      _embeddings.add(signature);
     } on _RetryCapture catch (e) {
-      _prompt = e.message;
+      _phase = _Phase.steady;
+      _steadyFrames = 0;
+      return _setPrompt(e.message);
     } catch (e) {
-      return _fail('Capture failed: ${errorMessage(e)}');
-    } finally {
-      if (shot != null) {
-        try {
-          await File(shot.path).delete();
-        } catch (_) {}
-      }
+      return _fail('Could not read your face: ${errorMessage(e)}');
     }
 
-    if (!mounted) return;
     if (_embeddings.length >= widget.samples) {
       _finished = true;
+      _controller?.stopImageStream().catchError((_) {});
       Navigator.of(context).pop(
         FaceCaptureResult(
           embeddings: List.of(_embeddings),
@@ -346,30 +452,54 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
       return;
     }
 
-    // More samples needed (enrollment) or the shot was unusable — keep going.
+    // Enrollment: take the next sample a moment later.
     setState(() {
       _phase = _Phase.steady;
       _steadyFrames = 0;
-      if (_embeddings.isNotEmpty && widget.samples > 1) {
-        _prompt =
-            'Sample ${_embeddings.length + 1} of ${widget.samples} — keep looking at the camera';
-      }
+      _nextSampleAt = DateTime.now().add(const Duration(milliseconds: 700));
+      _prompt = 'Sample ${_embeddings.length + 1} of ${widget.samples}. Keep looking at the camera';
     });
-    await Future<void>.delayed(const Duration(milliseconds: 600));
-    if (mounted && !_finished && _phase != _Phase.failed) {
-      await controller.startImageStream(_onFrame);
+  }
+
+  static double _similarity(List<double> a, List<double> b) {
+    var dot = 0.0;
+    for (var i = 0; i < a.length; i++) {
+      dot += a[i] * b[i];
     }
+    return dot; // both are L2-normalised
+  }
+
+  // ── Light ───────────────────────────────────────────────────────────────────
+
+  void _trackLight(double luma) {
+    if (_fillLight) return;
+    _darkFrames = luma < _fillLightLuma ? _darkFrames + 1 : 0;
+    if (_darkFrames >= 3) _enableFillLight();
+  }
+
+  /// White screen at full brightness lights the face from the front. It stays
+  /// on once enabled so the screen does not flicker.
+  void _enableFillLight() {
+    if (_fillLight || !mounted) return;
+    setState(() => _fillLight = true);
+    _brightnessChanged = true;
+    ScreenBrightness.instance.setApplicationScreenBrightness(1.0).catchError((_) {});
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
   void _setPrompt(String text) {
-    if (!mounted || text == _prompt) return;
+    if (!mounted) return;
+    if (text == _prompt) {
+      setState(() {}); // ring colour may have changed
+      return;
+    }
     setState(() => _prompt = text);
   }
 
   void _fail(String message) {
     if (!mounted || _finished) return;
+    _watchdog?.cancel();
     final controller = _controller;
     if (controller != null && controller.value.isStreamingImages) {
       controller.stopImageStream().catchError((_) {});
@@ -382,11 +512,13 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
 
   // ── UI ──────────────────────────────────────────────────────────────────────
 
+  _Look get _look => _fillLight ? _Look.light : _Look.dark;
+
   Color get _ringColor => switch (_ring) {
     _Ring.good => const Color(0xFF22C55E),
     _Ring.warn => AppColors.gold,
-    _Ring.ok => const Color(0xFF93C5FD),
-    _Ring.neutral => Colors.white70,
+    _Ring.ok => _fillLight ? AppColors.primary : const Color(0xFF93C5FD),
+    _Ring.neutral => _fillLight ? AppColors.textTertiary : Colors.white70,
   };
 
   @override
@@ -394,8 +526,9 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
     final controller = _controller;
     final remaining = _deadline.difference(DateTime.now()).inSeconds.clamp(0, 999);
     final failed = _phase == _Phase.failed;
+    final look = _look;
     return Scaffold(
-      backgroundColor: const Color(0xFF020617),
+      backgroundColor: look.background,
       body: Column(
         children: [
           Expanded(
@@ -420,7 +553,9 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
                 else if (!failed)
                   const Center(child: CircularProgressIndicator(color: Colors.white)),
                 IgnorePointer(
-                  child: CustomPaint(painter: _OvalMaskPainter(ringColor: _ringColor)),
+                  child: CustomPaint(
+                    painter: _OvalMaskPainter(ringColor: _ringColor, maskColor: look.mask),
+                  ),
                 ),
                 Positioned(
                   top: 0,
@@ -433,7 +568,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
                         children: [
                           IconButton(
                             tooltip: 'Cancel',
-                            color: Colors.white,
+                            color: look.text,
                             icon: const Icon(Icons.close_rounded),
                             onPressed: () => Navigator.of(context).maybePop(),
                           ),
@@ -443,7 +578,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
                               widget.mode == FaceCaptureMode.enroll
                                   ? 'Face enrollment'
                                   : 'Face verification',
-                              style: AppText.h3.copyWith(color: Colors.white),
+                              style: AppText.h3.copyWith(color: look.text),
                             ),
                           ),
                           Container(
@@ -451,18 +586,22 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
                             decoration: BoxDecoration(
                               color: remaining <= 15
                                   ? AppColors.error.withValues(alpha: 0.85)
-                                  : Colors.white.withValues(alpha: 0.14),
+                                  : look.text.withValues(alpha: 0.12),
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                const Icon(Icons.timer_outlined, size: 15, color: Colors.white),
+                                Icon(
+                                  Icons.timer_outlined,
+                                  size: 15,
+                                  color: remaining <= 15 ? Colors.white : look.text,
+                                ),
                                 const SizedBox(width: 6),
                                 Text(
                                   '${remaining}s',
                                   style: AppText.caption.copyWith(
-                                    color: Colors.white,
+                                    color: remaining <= 15 ? Colors.white : look.text,
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
@@ -485,14 +624,16 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
 
   Widget _buildPanel(BuildContext context) {
     final failed = _phase == _Phase.failed;
+    final look = _look;
     final total = _liveness.steps.length + (widget.samples > 1 ? 1 : 0);
     final doneSteps =
         _liveness.progress + (widget.samples > 1 && _embeddings.length >= widget.samples ? 1 : 0);
     return Container(
       width: double.infinity,
-      decoration: const BoxDecoration(
-        color: Color(0xFF0F172A),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      decoration: BoxDecoration(
+        color: look.panel,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        border: _fillLight ? const Border(top: BorderSide(color: AppColors.border)) : null,
       ),
       padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
       child: SafeArea(
@@ -514,8 +655,8 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
                         color: i < doneSteps
                             ? const Color(0xFF22C55E)
                             : i == doneSteps
-                            ? Colors.white
-                            : Colors.white24,
+                            ? look.text
+                            : look.faint,
                         borderRadius: BorderRadius.circular(4),
                       ),
                     ),
@@ -523,14 +664,11 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
               ),
               const SizedBox(height: 16),
             ],
-            if (failed) const Icon(Icons.error_outline_rounded, color: Color(0xFFFCA5A5), size: 34),
+            if (failed) Icon(Icons.error_outline_rounded, color: look.error, size: 34),
             Text(
               failed ? (_error ?? 'Something went wrong') : _prompt,
               textAlign: TextAlign.center,
-              style: AppText.h2.copyWith(
-                color: failed ? const Color(0xFFFCA5A5) : Colors.white,
-                fontSize: 19,
-              ),
+              style: AppText.h2.copyWith(color: failed ? look.error : look.text, fontSize: 19),
             ),
             const SizedBox(height: 14),
             Wrap(
@@ -540,12 +678,14 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
               children: [
                 for (var i = 0; i < _liveness.steps.length; i++)
                   _StepChip(
+                    look: look,
                     label: _liveness.steps[i].label,
                     done: i < _liveness.progress,
                     active: i == _liveness.progress && _phase == _Phase.liveness,
                   ),
                 if (widget.samples > 1)
                   _StepChip(
+                    look: look,
                     label: 'Photos ${_embeddings.length}/${widget.samples}',
                     done: _embeddings.length >= widget.samples,
                     active: _phase == _Phase.steady || _phase == _Phase.capturing,
@@ -556,13 +696,15 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.lock_outline_rounded, size: 14, color: Colors.white54),
+                Icon(Icons.lock_outline_rounded, size: 14, color: look.muted),
                 const SizedBox(width: 6),
                 Flexible(
                   child: Text(
-                    'Processed on this phone. Your photo is never stored or uploaded.',
+                    _fillLight
+                        ? 'Screen light is on to light up your face. Nothing is stored or uploaded.'
+                        : 'Processed on this phone. No photo is taken, stored or uploaded.',
                     textAlign: TextAlign.center,
-                    style: AppText.caption.copyWith(color: Colors.white54, fontSize: 12),
+                    style: AppText.caption.copyWith(color: look.muted, fontSize: 12),
                   ),
                 ),
               ],
@@ -572,10 +714,12 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
               SizedBox(
                 width: double.infinity,
                 child: FilledButton(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: AppColors.text,
-                  ),
+                  style: _fillLight
+                      ? null
+                      : FilledButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: AppColors.text,
+                        ),
                   onPressed: () => Navigator.of(context).pop(),
                   child: const Text('Close'),
                 ),
@@ -589,8 +733,14 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
 }
 
 class _StepChip extends StatelessWidget {
-  const _StepChip({required this.label, required this.done, required this.active});
+  const _StepChip({
+    required this.look,
+    required this.label,
+    required this.done,
+    required this.active,
+  });
 
+  final _Look look;
   final String label;
   final bool done;
   final bool active;
@@ -600,12 +750,12 @@ class _StepChip extends StatelessWidget {
     final color = done
         ? const Color(0xFF22C55E)
         : active
-        ? Colors.white
-        : Colors.white38;
+        ? look.text
+        : look.muted;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
       decoration: BoxDecoration(
-        color: active ? Colors.white.withValues(alpha: 0.1) : Colors.transparent,
+        color: active ? look.text.withValues(alpha: 0.08) : Colors.transparent,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: color.withValues(alpha: done || active ? 0.9 : 0.4)),
       ),
@@ -631,9 +781,10 @@ class _StepChip extends StatelessWidget {
 
 /// Darkens everything except an oval guide; the ring colour reflects face quality.
 class _OvalMaskPainter extends CustomPainter {
-  const _OvalMaskPainter({required this.ringColor});
+  const _OvalMaskPainter({required this.ringColor, required this.maskColor});
 
   final Color ringColor;
+  final Color maskColor;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -647,7 +798,7 @@ class _OvalMaskPainter extends CustomPainter {
       Path()..addRect(Offset.zero & size),
       Path()..addOval(oval),
     );
-    canvas.drawPath(mask, Paint()..color = const Color(0xFF020617).withValues(alpha: 0.62));
+    canvas.drawPath(mask, Paint()..color = maskColor);
     canvas.drawOval(
       oval,
       Paint()
@@ -658,5 +809,48 @@ class _OvalMaskPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _OvalMaskPainter oldDelegate) => oldDelegate.ringColor != ringColor;
+  bool shouldRepaint(covariant _OvalMaskPainter oldDelegate) =>
+      oldDelegate.ringColor != ringColor || oldDelegate.maskColor != maskColor;
+}
+
+/// Colours of the camera screen: dark normally, white when the screen is used
+/// as a fill light in a dim room.
+class _Look {
+  const _Look({
+    required this.background,
+    required this.mask,
+    required this.panel,
+    required this.text,
+    required this.muted,
+    required this.faint,
+    required this.error,
+  });
+
+  static const dark = _Look(
+    background: Color(0xFF020617),
+    mask: Color(0x9E020617),
+    panel: Color(0xFF0F172A),
+    text: Colors.white,
+    muted: Colors.white54,
+    faint: Colors.white24,
+    error: Color(0xFFFCA5A5),
+  );
+
+  static const light = _Look(
+    background: Colors.white,
+    mask: Color(0xF7FFFFFF),
+    panel: Colors.white,
+    text: AppColors.text,
+    muted: AppColors.textSecondary,
+    faint: AppColors.border,
+    error: AppColors.error,
+  );
+
+  final Color background;
+  final Color mask;
+  final Color panel;
+  final Color text;
+  final Color muted;
+  final Color faint;
+  final Color error;
 }

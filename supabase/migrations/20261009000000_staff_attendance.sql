@@ -171,7 +171,7 @@ create table if not exists public.campus_settings (
   max_location_accuracy_m  integer not null default 150 check (max_location_accuracy_m > 0),
   work_start_time          time not null default '09:00',
   late_grace_minutes       integer not null default 15 check (late_grace_minutes >= 0),
-  face_match_threshold     real not null default 0.60
+  face_match_threshold     real not null default 0.55
                            check (face_match_threshold > 0 and face_match_threshold < 1),
   updated_at               timestamptz not null default now()
 );

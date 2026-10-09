@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api_client.dart';
+import '../../core/config.dart';
 import '../../core/formatters.dart';
 import '../beacon/beacon_protocol.dart';
 import '../location/location_service.dart';
@@ -196,6 +197,7 @@ class AttendanceApi {
         'completed_steps': completedSteps,
         'device_fingerprint': fingerprint,
         'is_physical_device': isPhysicalDevice,
+        'model_version': AppConfig.faceModelVersion,
         if (location != null) 'location': location.toJson(),
       },
     );
