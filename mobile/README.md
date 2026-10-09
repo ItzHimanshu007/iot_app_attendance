@@ -62,8 +62,20 @@ assets/branding/logo.png
 
 * No gallery or storage permission. Faces are only captured from the live
   front camera.
-* The single captured JPEG is deleted right after the face signature is computed.
-* Only the 192-float signature is sent to the backend.
+* No photo is taken: the face is cut out of the live preview frame in memory
+  and turned into a 192-float signature. Nothing is written to storage.
+* Only that signature is sent to the backend.
+
+## Face capture on low-end phones
+
+* Works on 480p preview frames (`ResolutionPreset.medium`). It needs about 5 analysed frames per second, which cheap phones manage.
+* NV21 frames are used directly. Phones that send 3-plane YUV_420_888 frames instead are converted.
+* If no frame is analysed within 8 s, the screen explains why instead of waiting.
+* **Dim light:** when the face is dark, the screen turns white at full brightness and acts as a fill light. Crops that are still too dark are refused with a "Too dark" prompt.
+* **Brightness:** each crop is brightness-normalised before the signature is computed.
+* **Liveness:** thresholds suit noisy eye and smile readings. If ML Kit briefly loses the face during a head turn, the steps don't restart.
+* **Photo swap:** a signature taken while you do the liveness steps must match the final capture, so a photo held up at the end is caught.
+* **Model version:** signatures carry `mobilefacenet-112-v2` (`AppConfig.faceModelVersion`). A face enrolled with an older version gets `FACE_REENROLL_REQUIRED` and must be reset by an admin.
 
 `assets/models/mobilefacenet.tflite` is MobileFaceNet from
 [MCarlomagno/FaceRecognitionAuth](https://github.com/MCarlomagno/FaceRecognitionAuth)

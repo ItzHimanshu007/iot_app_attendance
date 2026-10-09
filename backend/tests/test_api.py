@@ -260,6 +260,18 @@ def test_wrong_face_is_rejected_and_logged(client: TestClient, world: World) -> 
     assert world.db.rows("attendance") == []
 
 
+def test_face_from_other_app_version_needs_reenrollment(client: TestClient, world: World) -> None:
+    staff, device, base = world.ready_staff(seed=8)  # enrolled with "mobilefacenet-v1"
+    beacon = world.beacon()
+    ch = challenge(client, staff, device, beacon).json()
+    r = submit(client, staff, device, beacon, ch, near(base, 1), model_version="mobilefacenet-v2")
+    assert r.status_code == 422 and error_code(r) == "FACE_REENROLL_REQUIRED"
+
+    ch = challenge(client, staff, device, beacon).json()
+    r = submit(client, staff, device, beacon, ch, near(base, 2), model_version="mobilefacenet-v1")
+    assert r.status_code == 200, r.text
+
+
 def test_challenge_cannot_be_replayed(client: TestClient, world: World) -> None:
     staff, device, base = world.ready_staff()
     beacon = world.beacon()

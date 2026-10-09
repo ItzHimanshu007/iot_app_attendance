@@ -92,6 +92,8 @@ class SubmitRequest(BaseModel):
     device_fingerprint: str = Fingerprint
     location: LocationReading | None = None
     is_physical_device: bool = True
+    # Face pipeline that produced the embedding; must match the enrolled template.
+    model_version: str | None = Field(None, max_length=60)
 
 
 # ── Admin ─────────────────────────────────────────────────────────────────────

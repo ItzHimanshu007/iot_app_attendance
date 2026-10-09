@@ -311,7 +311,7 @@ class _FakeAdminApi implements AdminApi {
     'max_location_accuracy_m': 150,
     'late_grace_minutes': 15,
     'geofence_mode': 'flag',
-    'face_match_threshold': 0.6,
+    'face_match_threshold': 0.55,
     'work_start_time': '09:00:00',
   };
 
@@ -420,6 +420,19 @@ void main() {
     ),
   );
   testWidgets(
+    '06b face low light',
+    (t) => _shot(
+      t,
+      '06b_face_low_light',
+      const FaceCaptureScreen(
+        mode: FaceCaptureMode.verify,
+        steps: ['blink', 'smile'],
+        previewOnly: true,
+        previewFillLight: true,
+      ),
+    ),
+  );
+  testWidgets(
     '07 result',
     (t) => _shot(
       t,
@@ -452,6 +465,7 @@ void main() {
             (_) => showVerificationError(
               context,
               const ApiException('Face did not match your enrolled face.', code: 'FACE_MISMATCH'),
+              allowRetry: true,
             ),
           );
           return MainShell(me: _me());

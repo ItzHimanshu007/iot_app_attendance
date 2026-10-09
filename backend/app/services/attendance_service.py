@@ -230,7 +230,7 @@ def submit(staff: CurrentStaff, req: SubmitRequest, ip: str | None) -> dict[str,
             )
 
         # 5. Face.
-        score = face_service.match(staff.id, req.embedding)
+        score = face_service.match(staff.id, req.embedding, req.model_version)
         log["face_score"] = round(score, 4)
         threshold = float(campus["face_match_threshold"])
         if score < threshold:

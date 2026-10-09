@@ -28,7 +28,7 @@ admin as a possible proxy attempt.
 | **Rejected (proxy attempt)** | **Attendance history** | **Admin overview** | **Proxy alerts** |
 | <img src="docs/screenshots/08_rejected.png" width="190"> | <img src="docs/screenshots/09_history.png" width="190"> | <img src="docs/screenshots/11_admin_overview.png" width="190"> | <img src="docs/screenshots/13_admin_alerts.png" width="190"> |
 
-All 15 screens are in [`docs/screenshots/`](docs/screenshots). They are rendered from the real
+All 16 screens are in [`docs/screenshots/`](docs/screenshots). They are rendered from the real
 widgets with sample data (`flutter test --tags screenshots --run-skipped --update-goldens`).
 
 ## Repository layout
@@ -55,6 +55,28 @@ Daily:  beacon in range ──► POST /attendance/challenge   (beacon token, ph
 
 See [`docs/TRANSITION_PLAN.md`](docs/TRANSITION_PLAN.md) for the full design.
 
+## Face recognition accuracy
+
+**How this was measured:**
+
+* The app's own crop code (Dart) was run on raw camera-style NV21 frames made from a public face-photo set: 25 photos of 6 people, about 2,000 comparisons.
+* The frames were scored with the bundled MobileFaceNet model.
+* Each person was enrolled from 2 photos, the way the app builds its template.
+
+| Conditions (threshold 0.55) | Right person accepted, one try | Wrong person accepted | Highest wrong-person score |
+|---|:-:|:-:|:-:|
+| Good light | 88 % | 0 % | 0.35 |
+| Low-end camera (≈110 px face, blur, noise, JPEG artefacts, 60 % light) | 85 % | 0 % | 0.47 |
+| Dim room (35 % light + noise) | 87 % | 0 % | 0.39 |
+
+**What this means:**
+
+* About 1 in 8 genuine attempts needs a second try. The error sheet has a **Try again** button for this.
+* The test photos span years, poses and make-up. Live captures of the same person in the same month usually match better.
+* The threshold is adjustable in **Admin → Settings**.
+
+**Not covered:** ML Kit and the camera on real phones. Test on 2–3 cheap phones before the demo.
+
 ## Setup
 
 ### 1. Supabase (database + login)
@@ -75,7 +97,7 @@ python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\
 pip install -r requirements-dev.txt
 cp .env.example .env        # fill SUPABASE_URL + SUPABASE_SERVICE_KEY
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-pytest -q                   # 41 tests, no network needed
+pytest -q                   # 42 tests, no network needed
 ```
 
 Open <http://localhost:8000/docs> for the interactive API and
@@ -144,20 +166,27 @@ and the **Excel export**.
 | "Looking for a campus beacon…" forever | Turn on Bluetooth **and Location**, grant *Nearby devices* + *Location*. Check that the ESP32 LED is solid (time synced). |
 | `BEACON_TOKEN_INVALID` | The ESP32 clock is not synced (no Wi-Fi at boot), or `TOKEN_WINDOW_SECONDS` ≠ backend `BEACON_WINDOW_SECONDS`, or the beacon secret was rotated without re-flashing. |
 | `BEACON_TOO_FAR` | Move closer, or lower the beacon's RSSI threshold in Admin → Beacons. |
-| `FACE_MISMATCH` for the right person | Better light, no mask/cap. Check the scores in Admin → Alerts and adjust the threshold (default 0.60), or reset and re-enroll the face. |
+| Screen turns white during the face scan | Normal: in a dim room the screen becomes a fill light. If it still says "Too dark", face a window or tube light. |
+| "The camera is not sending pictures" / "camera format not supported" | Close other apps using the camera and restart the app. If it persists, note the phone model: that phone needs a fix. |
+| `FACE_REENROLL_REQUIRED` | The face was enrolled with an older app version. Admin → Staff → *Reset face*, then enroll again. |
+| `FACE_MISMATCH` for the right person | Better light, no mask/cap. Check the scores in Admin → Alerts and adjust the threshold (default 0.55), or reset and re-enroll the face. |
 | Changed phone → `DEVICE_ALREADY_BOUND` | Admin → Staff → *Reset bound phone*. |
 | First request times out | Render free tier is waking up. Retry after ~30 s. |
 | `PROFILE_MISSING` | The migration (which creates the sign-up trigger) was not run before the user signed up. |
 
 ## Verification done for this transition
 
-* Backend: 41 pytest tests (full check-in/out flow and every rejection path),
+* Backend: 42 pytest tests (full check-in/out flow and every rejection path),
   ruff clean, and the server boots.
 * Database: migration run twice (idempotent) on PostgreSQL 16 with a stubbed
   Supabase `auth` schema; trigger, unique constraints and RLS checked.
-* Mobile: `flutter analyze` clean, 12 unit tests (beacon decoding, liveness,
-  face crop, today state, name/initials), and all 15 screens rendered and
-  reviewed with the screenshot generator (no layout overflows at 390 px width).
+* Mobile: `flutter analyze` clean, 18 unit tests (beacon decoding, liveness
+  incl. lost-face tolerance, face crop from rotated NV21 frames, YUV packing,
+  today state, name/initials), and all 16 screens rendered and reviewed with
+  the screenshot generator (no layout overflows at 390 px width).
+* Face pipeline: the app's Dart crop code was run on raw NV21 frames of real
+  face photos in all sensor rotations and scored with the bundled model (see
+  *Face recognition accuracy*).
 * Firmware: token generator host-compiled and checked against the backend's
   test vector (`37a4820d05333aa1`).
 * **Not done here:** building the APK and compiling the ESP32 firmware. The

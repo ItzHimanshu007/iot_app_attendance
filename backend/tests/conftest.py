@@ -54,7 +54,7 @@ class World:
                 "max_location_accuracy_m": 150,
                 "work_start_time": "09:00:00",
                 "late_grace_minutes": 15,
-                "face_match_threshold": 0.6,
+                "face_match_threshold": 0.55,
             },
         )
 

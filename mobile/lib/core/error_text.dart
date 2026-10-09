@@ -16,6 +16,23 @@ class ErrorText {
         const ErrorText('Could not mark attendance', Icons.error_outline_rounded);
   }
 
+  /// Errors the staff member can fix by simply trying again (new challenge, new capture).
+  static bool canRetry(Object error) => error is ApiException && _retryable.contains(error.code);
+
+  static const _retryable = {
+    'FACE_MISMATCH',
+    'LIVENESS_FAILED',
+    'CHALLENGE_EXPIRED',
+    'CHALLENGE_USED',
+    'CHALLENGE_INVALID',
+    'BEACON_TOKEN_INVALID',
+    'BEACON_TOO_FAR',
+    'BEACON_MISMATCH',
+    'LOCATION_REQUIRED',
+    'NETWORK_ERROR',
+    'TIMEOUT',
+  };
+
   static ErrorText forCode(String? code) =>
       _byCode[code] ?? const ErrorText('Verification failed', Icons.gpp_bad_outlined);
 
@@ -23,7 +40,7 @@ class ErrorText {
     'FACE_MISMATCH': ErrorText(
       'Face not recognised',
       Icons.face_retouching_off,
-      'Use good light, remove mask or cap, and hold the phone at eye level.',
+      'Face a light, remove mask or cap, hold the phone at eye level and try again.',
     ),
     'LIVENESS_FAILED': ErrorText(
       'Liveness check failed',
@@ -88,6 +105,11 @@ class ErrorText {
     'NOT_CHECKED_IN': ErrorText('Not checked in yet', Icons.event_busy_outlined, null),
     'DAY_LOCKED': ErrorText('Marked by admin', Icons.lock_outline_rounded, null),
     'FACE_NOT_ENROLLED': ErrorText('Face not enrolled', Icons.face_outlined, null),
+    'FACE_REENROLL_REQUIRED': ErrorText(
+      'Enroll your face again',
+      Icons.face_retouching_natural,
+      'The app was updated. Ask the administrator to reset your face, then enroll again.',
+    ),
     'FACE_NOT_APPROVED': ErrorText(
       'Awaiting approval',
       Icons.hourglass_top_rounded,

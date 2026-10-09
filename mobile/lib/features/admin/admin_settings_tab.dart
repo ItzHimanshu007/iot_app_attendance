@@ -31,7 +31,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
   final _grace = TextEditingController();
   String _mode = 'flag';
   TimeOfDay _start = const TimeOfDay(hour: 9, minute: 0);
-  double _threshold = 0.6;
+  double _threshold = 0.55;
 
   bool _loading = true;
   bool _saving = false;
@@ -69,7 +69,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
       _accuracy.text = '${c['max_location_accuracy_m'] ?? 150}';
       _grace.text = '${c['late_grace_minutes'] ?? 15}';
       _mode = '${c['geofence_mode'] ?? 'flag'}';
-      _threshold = (c['face_match_threshold'] as num?)?.toDouble() ?? 0.6;
+      _threshold = (c['face_match_threshold'] as num?)?.toDouble() ?? 0.55;
       final parts = '${c['work_start_time'] ?? '09:00'}'.split(':');
       _start = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
     } catch (e) {
@@ -357,8 +357,8 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
                 onChanged: (v) => setState(() => _threshold = v),
               ),
               const Text(
-                'Higher is stricter. The same person usually scores 0.65–0.90 — check the '
-                'scores in Alerts before changing this.',
+                'Recommended 0.55. Higher is stricter but rejects more genuine staff on '
+                'low-end cameras. Check the scores in Alerts before changing this.',
                 style: AppText.caption,
               ),
             ],

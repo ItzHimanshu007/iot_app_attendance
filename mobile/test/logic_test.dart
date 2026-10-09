@@ -1,9 +1,8 @@
-import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
-import 'package:image/image.dart' as img;
 import 'package:staff_attendance/core/formatters.dart';
 import 'package:staff_attendance/features/attendance/attendance_api.dart';
 import 'package:staff_attendance/features/beacon/beacon_protocol.dart';
@@ -17,8 +16,9 @@ Face face({
   double yaw = 0,
   double pitch = 0,
   int? id = 1,
+  Rect box = const Rect.fromLTWH(100, 100, 200, 200),
 }) => Face(
-  boundingBox: const Rect.fromLTWH(100, 100, 200, 200),
+  boundingBox: box,
   landmarks: const {},
   contours: const {},
   leftEyeOpenProbability: left,
@@ -75,17 +75,46 @@ void main() {
       expect(t.completed, ['smile', 'turn_head']);
     });
 
-    test('a different face (tracking id) resets progress', () {
+    final t0 = DateTime(2026, 10, 9, 9);
+    Duration ms(int v) => Duration(milliseconds: v);
+
+    test('a different face resets progress (long gap or jump across the frame)', () {
       final t = LivenessTracker([LivenessStep.smile, LivenessStep.blink]);
-      expect(t.update(face(smile: 0.95, id: 1)), isTrue);
+      expect(t.update(face(smile: 0.95, id: 1), t0), isTrue);
       expect(t.progress, 1);
-      t.update(face(id: 2));
+      t.update(face(id: 2), t0.add(ms(2000))); // new id after 2 s
       expect(t.progress, 0);
       expect(t.completed, isEmpty);
+
+      expect(t.update(face(smile: 0.95, id: 2), t0.add(ms(2100))), isTrue);
+      final far = face(id: 3, box: const Rect.fromLTWH(400, 100, 200, 200));
+      expect(t.sameFace(far, t0.add(ms(2300))), isFalse); // new id, moved 2 face-widths
+      expect(t.progress, 0);
+    });
+
+    test('ML Kit briefly losing the face (new id, same place) keeps progress', () {
+      final t = LivenessTracker([LivenessStep.turnHead, LivenessStep.smile]);
+      expect(t.update(face(yaw: 35, id: 1), t0), isFalse);
+      // face lost while turned, re-found 0.8 s later with a new id, slightly moved
+      final back = face(yaw: 4, id: 7, box: const Rect.fromLTWH(130, 110, 190, 190));
+      expect(t.update(back, t0.add(ms(800))), isTrue);
+      expect(t.completed, ['turn_head']);
+    });
+
+    test('thresholds work with noisy low-end camera values', () {
+      final t = LivenessTracker([LivenessStep.blink, LivenessStep.smile, LivenessStep.turnHead]);
+      expect(t.update(face(left: 0.5, right: 0.7)), isFalse); // open on average
+      expect(t.update(face(left: 0.35, right: 0.2)), isFalse); // closed on average
+      expect(t.update(face(left: 0.6, right: 0.55)), isTrue);
+      expect(t.update(face(smile: 0.75)), isTrue);
+      expect(t.update(face(yaw: 21)), isFalse);
+      expect(t.update(face(yaw: 10)), isTrue);
+      expect(t.isDone, isTrue);
     });
 
     test('capture frame must be frontal with open eyes', () {
       expect(LivenessTracker.isGoodCaptureFrame(face()), isTrue);
+      expect(LivenessTracker.isGoodCaptureFrame(face(yaw: 12, pitch: 18)), isTrue);
       expect(LivenessTracker.isGoodCaptureFrame(face(yaw: 25)), isFalse);
       expect(LivenessTracker.isGoodCaptureFrame(face(left: 0.1)), isFalse);
     });
@@ -97,28 +126,103 @@ void main() {
     });
   });
 
-  test('preprocessFace crops, resizes and normalises to [-1, 1]', () {
-    final photo = img.Image(width: 640, height: 480);
-    img.fill(photo, color: img.ColorRgb8(200, 120, 40));
-    final file = File(
-      '${Directory.systemTemp.path}/face_test_${DateTime.now().microsecondsSinceEpoch}.jpg',
-    )..writeAsBytesSync(img.encodeJpg(photo));
-    addTearDown(() => file.deleteSync());
+  group('Face crop from the live NV21 frame', () {
+    /// Raw frame whose luma encodes the position: Y = x + 10·y; chroma neutral.
+    Nv21Frame grid(int rotation) {
+      const w = 6, h = 4;
+      final bytes = Uint8List(w * h * 3 ~/ 2)..fillRange(w * h, w * h * 3 ~/ 2, 128);
+      for (var y = 0; y < h; y++) {
+        for (var x = 0; x < w; x++) {
+          bytes[y * w + x] = x + 10 * y;
+        }
+      }
+      return Nv21Frame(bytes: bytes, width: w, height: h, rotation: rotation);
+    }
 
-    final out = preprocessFace(
-      FaceCropRequest(path: file.path, left: 220, top: 120, width: 200, height: 220, size: 112),
-    )!;
-    expect(out.length, 112 * 112 * 3);
-    expect(out.every((v) => v >= -1.0 && v <= 1.0), isTrue);
-    // Red channel ≈ (200 - 127.5) / 128
-    expect(out[0], closeTo(0.566, 0.05));
-    // A box completely outside the image is rejected.
-    expect(
-      preprocessFace(
-        FaceCropRequest(path: file.path, left: 5000, top: 5000, width: 100, height: 100, size: 112),
-      ),
-      isNull,
-    );
+    test('upright (ML Kit) coordinates map back to the right raw pixel', () {
+      const w = 6, h = 4;
+      final expected = <int, int Function(int i, int j)>{
+        0: (i, j) => i + 10 * j,
+        90: (i, j) => j + 10 * (h - 1 - i),
+        180: (i, j) => (w - 1 - i) + 10 * (h - 1 - j),
+        270: (i, j) => (w - 1 - j) + 10 * i,
+      };
+      expected.forEach((rotation, raw) {
+        final f = grid(rotation);
+        expect(f.uprightWidth, rotation % 180 == 0 ? w : h);
+        for (var j = 0; j < f.uprightHeight; j++) {
+          for (var i = 0; i < f.uprightWidth; i++) {
+            final (rx, ry) = f.toRaw(i + 0.5, j + 0.5);
+            expect(f.lumaAt(rx, ry), raw(i, j), reason: 'rotation $rotation, upright ($i, $j)');
+          }
+        }
+      });
+    });
+
+    Nv21Frame solid(
+      int w,
+      int h,
+      int Function(int x, int y) luma, {
+      int v = 128,
+      int rotation = 0,
+    }) {
+      final bytes = Uint8List(w * h * 3 ~/ 2);
+      for (var y = 0; y < h; y++) {
+        for (var x = 0; x < w; x++) {
+          bytes[y * w + x] = luma(x, y);
+        }
+      }
+      for (var i = w * h; i < bytes.length; i += 2) {
+        bytes[i] = v; // V
+        bytes[i + 1] = 128; // U
+      }
+      return Nv21Frame(bytes: bytes, width: w, height: h, rotation: rotation);
+    }
+
+    test('crop is 112×112 RGB in [-1, 1] with brightness evened out', () {
+      final dim = cropFace(solid(64, 48, (_, _) => 64), 12, 4, 40, 40, 112)!;
+      expect(dim.pixels.length, 112 * 112 * 3);
+      expect(dim.meanLuma, closeTo(64, 0.01));
+      expect(dim.pixels.every((v) => v.abs() < 0.02), isTrue); // 64 × gain 2 → mid grey
+
+      final red = cropFace(solid(64, 48, (_, _) => 128, v: 200), 12, 4, 40, 40, 112)!;
+      expect(red.pixels.every((v) => v >= -1 && v <= 1), isTrue);
+      expect(red.pixels[0], closeTo((128 + 1.402 * 72 - 127.5) / 128, 0.02)); // R
+      expect(red.pixels[0], greaterThan(red.pixels[1] + 0.5)); // R ≫ G
+    });
+
+    test('front-camera frame (rotated 90°) comes out upright', () {
+      // Raw left half dark, right half bright → upright top dark, bottom bright.
+      final f = solid(64, 48, (x, _) => x < 32 ? 40 : 200, rotation: 90);
+      final crop = cropFace(f, 4, 12, 40, 40, 112)!;
+      final top = crop.pixels[3 * (5 * 112 + 56)];
+      final bottom = crop.pixels[3 * (106 * 112 + 56)];
+      expect(top, lessThan(bottom - 0.5));
+    });
+
+    test('rejects a box outside the frame or too small', () {
+      final f = solid(64, 48, (_, _) => 100);
+      expect(cropFace(f, 5000, 5000, 100, 100, 112), isNull);
+      expect(cropFace(f, 10, 10, 20, 20, 112), isNull);
+    });
+
+    test('3-plane YUV_420_888 (padded rows, pixel stride 2) packs into NV21', () {
+      // 4×2 image, Y row stride 6; U/V interleaved views with pixel stride 2.
+      final y = Uint8List.fromList([1, 2, 3, 4, 0, 0, 5, 6, 7, 8, 0, 0]);
+      final u = Uint8List.fromList([20, 0, 21]);
+      final v = Uint8List.fromList([30, 0, 31]);
+      final nv21 = Nv21Frame.yuv420ToNv21(
+        width: 4,
+        height: 2,
+        y: y,
+        yRowStride: 6,
+        u: u,
+        v: v,
+        uvRowStride: 4,
+        uvPixelStride: 2,
+      );
+      expect(nv21, [1, 2, 3, 4, 5, 6, 7, 8, 30, 20, 31, 21]);
+    });
   });
 
   group('TodayInfo.nextAction', () {

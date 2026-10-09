@@ -113,14 +113,25 @@ def enroll(staff: CurrentStaff, req: FaceEnroll, ip: str | None = None) -> dict[
     return public_face(row) or {}
 
 
-def match(staff_id: str, embedding: list[float]) -> float:
-    """Similarity between a live signature and the approved template."""
+def match(staff_id: str, embedding: list[float], model_version: str | None = None) -> float:
+    """Similarity between a live signature and the approved template.
+
+    Signatures from different face pipelines are not comparable, so a template
+    enrolled with another app version must be re-enrolled.
+    """
     template = _repo.get(staff_id)
     if template is None:
         raise VerificationError("Enroll your face first.", "FACE_NOT_ENROLLED")
     if template.get("status") != "approved":
         raise VerificationError(
             "Your face enrollment is waiting for admin approval.", "FACE_NOT_APPROVED"
+        )
+    enrolled_with = template.get("model_version")
+    if model_version and enrolled_with and model_version != enrolled_with:
+        raise VerificationError(
+            "Your face was enrolled with an older version of the app. Ask an admin to "
+            "reset your face, then enroll again.",
+            "FACE_REENROLL_REQUIRED",
         )
     probe = normalize(embedding)
     if len(probe) != int(template["embedding_dim"]):
