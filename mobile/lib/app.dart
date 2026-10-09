@@ -8,9 +8,9 @@ import 'core/api_exception.dart';
 import 'core/config.dart';
 import 'core/theme/app_theme.dart';
 import 'core/theme/colors.dart';
+import 'core/theme/typography.dart';
 import 'features/admin/admin_screen.dart';
 import 'features/attendance/history_screen.dart';
-import 'features/attendance/home_screen.dart';
 import 'features/auth/auth_service.dart';
 import 'features/auth/forgot_password_screen.dart';
 import 'features/auth/login_screen.dart';
@@ -18,6 +18,7 @@ import 'features/auth/session.dart';
 import 'features/auth/signup_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
 import 'features/profile/profile_screen.dart';
+import 'features/shell/main_shell.dart';
 import 'shared/widgets.dart';
 
 const _publicRoutes = {'/', '/signup', '/forgot'};
@@ -50,7 +51,6 @@ class StaffAttendanceApp extends ConsumerWidget {
       title: 'Staff Attendance',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      darkTheme: AppTheme.dark,
       themeMode: ThemeMode.light,
       routerConfig: ref.watch(routerProvider),
     );
@@ -97,7 +97,7 @@ class _AppGateState extends ConsumerState<AppGate> {
           data: (me) {
             if (me == null) return const _Splash();
             if (!me.onboarding.isReady) return OnboardingScreen(me: me);
-            return HomeScreen(me: me);
+            return MainShell(me: me);
           },
         );
   }
@@ -108,17 +108,28 @@ class _Splash extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.badge_outlined, size: 56, color: AppColors.primary),
-            SizedBox(height: 20),
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('Connecting… (the server may take a few seconds to wake up)'),
-          ],
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(gradient: AppColors.headerGradient),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const BrandLogo(size: 84),
+              const SizedBox(height: 24),
+              Text(AppConfig.appName, style: AppText.h1.copyWith(color: Colors.white)),
+              const SizedBox(height: 4),
+              Text(AppConfig.collegeName, style: AppText.body.copyWith(color: Colors.white70)),
+              const SizedBox(height: 36),
+              const SizedBox(
+                width: 26,
+                height: 26,
+                child: CircularProgressIndicator(strokeWidth: 2.6, color: Colors.white),
+              ),
+              const SizedBox(height: 14),
+              Text('Connecting…', style: AppText.caption.copyWith(color: Colors.white60)),
+            ],
+          ),
         ),
       ),
     );

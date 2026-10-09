@@ -9,6 +9,17 @@ class AppConfig {
   static const String supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
   static const String apiBaseUrl = String.fromEnvironment('API_URL');
 
+  // ── Branding (shown before sign-in; the backend campus name is used after) ─
+  static const String appName = 'Staff Attendance';
+  static const String collegeName = String.fromEnvironment(
+    'COLLEGE_NAME',
+    defaultValue: 'Smart Campus',
+  );
+  static const String supportContact = String.fromEnvironment(
+    'SUPPORT_CONTACT',
+    defaultValue: 'the administration office',
+  );
+
   static bool get isConfigured =>
       supabaseUrl.startsWith('https://') &&
       supabaseAnonKey.isNotEmpty &&

@@ -20,6 +20,17 @@ admin as a possible proxy attempt.
 > rotate them, or better, create a fresh Supabase project and HiveMQ account.
 > They are still in git history.
 
+## Screenshots
+
+| Sign in | Home (on campus) | Face verification | Checked in |
+|:-:|:-:|:-:|:-:|
+| <img src="docs/screenshots/01_login.png" width="190"> | <img src="docs/screenshots/04_home.png" width="190"> | <img src="docs/screenshots/06_face_verification.png" width="190"> | <img src="docs/screenshots/07_checked_in.png" width="190"> |
+| **Rejected (proxy attempt)** | **Attendance history** | **Admin overview** | **Proxy alerts** |
+| <img src="docs/screenshots/08_rejected.png" width="190"> | <img src="docs/screenshots/09_history.png" width="190"> | <img src="docs/screenshots/11_admin_overview.png" width="190"> | <img src="docs/screenshots/13_admin_alerts.png" width="190"> |
+
+All 15 screens are in [`docs/screenshots/`](docs/screenshots). They are rendered from the real
+widgets with sample data (`flutter test --tags screenshots --run-skipped --update-goldens`).
+
 ## Repository layout
 
 ```
@@ -79,7 +90,7 @@ launch, but open the URL once before a demo.
 
 ```bash
 cd mobile
-cp config/example.json config/dev.json     # fill SUPABASE_URL, SUPABASE_ANON_KEY, API_URL
+cp config/example.json config/dev.json     # fill SUPABASE_URL, SUPABASE_ANON_KEY, API_URL, COLLEGE_NAME
 flutter pub get
 flutter run --dart-define-from-file=config/dev.json          # phone connected via USB
 flutter build apk --release --dart-define-from-file=config/dev.json
@@ -144,8 +155,9 @@ and the **Excel export**.
   ruff clean, and the server boots.
 * Database: migration run twice (idempotent) on PostgreSQL 16 with a stubbed
   Supabase `auth` schema; trigger, unique constraints and RLS checked.
-* Mobile: `flutter analyze` clean, 10 unit tests (beacon decoding, liveness,
-  face crop, today state).
+* Mobile: `flutter analyze` clean, 12 unit tests (beacon decoding, liveness,
+  face crop, today state, name/initials), and all 15 screens rendered and
+  reviewed with the screenshot generator (no layout overflows at 390 px width).
 * Firmware: token generator host-compiled and checked against the backend's
   test vector (`37a4820d05333aa1`).
 * **Not done here:** building the APK and compiling the ESP32 firmware. The

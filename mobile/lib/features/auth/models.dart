@@ -1,3 +1,5 @@
+import '../../core/formatters.dart';
+
 /// Profile + onboarding state returned by `GET /api/v1/me`.
 class StaffProfile {
   const StaffProfile({
@@ -25,14 +27,10 @@ class StaffProfile {
   bool get isAdmin => role == 'admin';
   bool get isActive => status == 'active';
 
-  String get firstName => fullName.trim().split(RegExp(r'\s+')).first;
+  /// Name for greetings, keeping a title: "Dr. Asha".
+  String get firstName => Fmt.shortName(fullName);
 
-  String get initials {
-    final parts = fullName.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
-    if (parts.isEmpty) return '?';
-    if (parts.length == 1) return parts.first[0].toUpperCase();
-    return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
-  }
+  String get initials => Fmt.initials(fullName);
 
   factory StaffProfile.fromJson(Map<String, dynamic> json) => StaffProfile(
     id: json['id'] as String,

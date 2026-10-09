@@ -40,7 +40,6 @@ dependencies:
   geolocator: ^14.1.1
 
   # UI / utilities
-  google_fonts: ^9.0.0
   intl: ^0.20.3
   path_provider: ^2.1.6
   share_plus: ^13.3.1
@@ -54,3 +53,17 @@ flutter:
   uses-material-design: true
   assets:
     - assets/models/
+    - assets/branding/
+
+  # Poppins (SIL OFL 1.1, see assets/fonts/OFL.txt) for headings and labels;
+  # body text uses Roboto, Android's system font.
+  fonts:
+    - family: Poppins
+      fonts:
+        - asset: assets/fonts/Poppins-Regular.ttf
+        - asset: assets/fonts/Poppins-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Poppins-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Poppins-Bold.ttf
+          weight: 700

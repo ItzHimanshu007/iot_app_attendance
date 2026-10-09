@@ -23,6 +23,44 @@ class Fmt {
     return '${minutes ~/ 60}h ${(minutes % 60).toString().padLeft(2, '0')}m';
   }
 
+  static final _monthYear = DateFormat('MMMM yyyy');
+  static final _weekday = DateFormat('EEE');
+  static final _longDate = DateFormat('EEEE, d MMMM');
+
+  static String monthYear(DateTime value) => _monthYear.format(value);
+  static String weekday(DateTime value) => _weekday.format(value);
+  static String longDate(DateTime value) => _longDate.format(value);
+
+  static String greeting([DateTime? at]) {
+    final hour = (at ?? DateTime.now()).hour;
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
+  }
+
+  static const _honorifics = {'dr', 'prof', 'mr', 'mrs', 'ms', 'miss', 'er', 'shri', 'smt', 'sri'};
+
+  static bool _isHonorific(String word) =>
+      _honorifics.contains(word.toLowerCase().replaceAll('.', ''));
+
+  /// "Dr. Asha Rao" → "AR".
+  static String initials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    final words = parts.where((p) => !_isHonorific(p)).toList();
+    final use = words.isEmpty ? parts : words;
+    if (use.isEmpty) return '?';
+    if (use.length == 1) return use.first[0].toUpperCase();
+    return '${use.first[0]}${use.last[0]}'.toUpperCase();
+  }
+
+  /// "Dr. Asha Rao" → "Dr. Asha", "Asha Rao" → "Asha".
+  static String shortName(String name) {
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return '';
+    if (_isHonorific(parts.first) && parts.length > 1) return '${parts[0]} ${parts[1]}';
+    return parts.first;
+  }
+
   static String statusLabel(String status) => switch (status) {
     'present' => 'Present',
     'late' => 'Late',

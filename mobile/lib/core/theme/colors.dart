@@ -1,73 +1,54 @@
 import 'package:flutter/material.dart';
 
-/// Colour palette (kept from the original campus app).
+/// Institutional palette: deep navy + academic gold, slate neutrals.
 class AppColors {
   AppColors._();
 
-  // ── Primary (Deep Indigo) ──────────────────────────────────────────────────
-  static const Color primary = Color(0xFF4F46E5); // Indigo 600
-  static const Color primaryLight = Color(0xFF818CF8); // Indigo 400
-  static const Color primaryDark = Color(0xFF3730A3); // Indigo 800
-  static const Color primarySurface = Color(0xFFEEF2FF); // Indigo 50
-
-  // ── Secondary (Teal Accent) ────────────────────────────────────────────────
-  static const Color secondary = Color(0xFF0D9488); // Teal 600
-  static const Color secondaryLight = Color(0xFF2DD4BF);
-  static const Color secondaryDark = Color(0xFF115E59);
-  static const Color secondarySurface = Color(0xFFF0FDFA);
+  // ── Brand ──────────────────────────────────────────────────────────────────
+  static const Color navy = Color(0xFF0B2A5B); // headers
+  static const Color navyDark = Color(0xFF071D40);
+  static const Color primary = Color(0xFF1D4ED8); // actions
+  static const Color primaryDark = Color(0xFF1E3A8A);
+  static const Color primarySoft = Color(0xFFE8EEFC);
+  static const Color gold = Color(0xFFF5B301); // sparing highlights
+  static const Color goldSoft = Color(0xFFFFF6DB);
 
   // ── Semantic ───────────────────────────────────────────────────────────────
-  static const Color success = Color(0xFF16A34A);
-  static const Color successSurface = Color(0xFFF0FDF4);
-  static const Color warning = Color(0xFFD97706);
-  static const Color warningSurface = Color(0xFFFFFBEB);
-  static const Color error = Color(0xFFDC2626);
-  static const Color errorSurface = Color(0xFFFEF2F2);
-  static const Color info = Color(0xFF2563EB);
-  static const Color infoSurface = Color(0xFFEFF6FF);
+  static const Color success = Color(0xFF15803D);
+  static const Color successSoft = Color(0xFFDCFCE7);
+  static const Color warning = Color(0xFFB45309);
+  static const Color warningSoft = Color(0xFFFEF3C7);
+  static const Color error = Color(0xFFB91C1C);
+  static const Color errorSoft = Color(0xFFFEE2E2);
+  static const Color info = Color(0xFF0369A1);
+  static const Color infoSoft = Color(0xFFE0F2FE);
 
-  // ── Neutrals ───────────────────────────────────────────────────────────────
-  static const Color textPrimary = Color(0xFF111827);
-  static const Color textSecondary = Color(0xFF6B7280);
-  static const Color textTertiary = Color(0xFF9CA3AF);
-  static const Color textOnPrimary = Color(0xFFFFFFFF);
-
-  static const Color background = Color(0xFFF9FAFB);
+  // ── Neutrals (slate) ───────────────────────────────────────────────────────
+  static const Color text = Color(0xFF0F172A);
+  static const Color textSecondary = Color(0xFF475569);
+  static const Color textTertiary = Color(0xFF94A3B8);
+  static const Color background = Color(0xFFF3F5F9);
   static const Color surface = Color(0xFFFFFFFF);
-  static const Color surfaceVariant = Color(0xFFF3F4F6);
-  static const Color border = Color(0xFFE5E7EB);
-  static const Color divider = Color(0xFFF3F4F6);
+  static const Color surfaceMuted = Color(0xFFF1F5F9);
+  static const Color border = Color(0xFFE2E8F0);
+  static const Color divider = Color(0xFFEDF1F6);
 
-  // ── Dark mode ──────────────────────────────────────────────────────────────
-  static const Color darkBackground = Color(0xFF0F172A);
-  static const Color darkSurface = Color(0xFF1E293B);
-  static const Color darkSurfaceVariant = Color(0xFF334155);
-  static const Color darkBorder = Color(0xFF475569);
-  static const Color darkTextPrimary = Color(0xFFF1F5F9);
-  static const Color darkTextSecondary = Color(0xFF94A3B8);
+  // ── Attendance status ──────────────────────────────────────────────────────
+  static const Color present = success;
+  static const Color late = warning;
+  static const Color absent = error;
+  static const Color onLeave = info;
+  static const Color notMarked = Color(0xFF64748B);
 
-  // ── Attendance specific ────────────────────────────────────────────────────
-  static const Color present = Color(0xFF16A34A);
-  static const Color late_ = Color(0xFFD97706);
-  static const Color absent = Color(0xFFDC2626);
-  static const Color revoked = Color(0xFF6B7280);
-
-  // ── Gradients ──────────────────────────────────────────────────────────────
-  static const LinearGradient primaryGradient = LinearGradient(
-    colors: [primary, Color(0xFF7C3AED)],
+  static const LinearGradient headerGradient = LinearGradient(
+    colors: [navyDark, navy, Color(0xFF15408A)],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
 
-  static const LinearGradient cardGradient = LinearGradient(
-    colors: [Color(0xFF4F46E5), Color(0xFF0D9488)],
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-  );
-
-  static const LinearGradient successGradient = LinearGradient(
-    colors: [Color(0xFF16A34A), Color(0xFF0D9488)],
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
+  static const LinearGradient actionGradient = LinearGradient(
+    colors: [Color(0xFF1E40AF), primary],
+    begin: Alignment.centerLeft,
+    end: Alignment.centerRight,
   );
 }

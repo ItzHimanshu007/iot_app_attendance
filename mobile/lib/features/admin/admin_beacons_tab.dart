@@ -5,10 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/api_exception.dart';
 import '../../core/formatters.dart';
 import '../../core/theme/colors.dart';
+import '../../core/theme/typography.dart';
 import '../../shared/widgets.dart';
 import 'admin_api.dart';
 
-/// Manage ESP32 beacons and get the firmware config for each one.
+/// ESP32 beacons and their firmware configuration.
 class BeaconsTab extends ConsumerStatefulWidget {
   const BeaconsTab({super.key});
 
@@ -27,8 +28,8 @@ class _BeaconsTabState extends ConsumerState<BeaconsTab> {
     return Scaffold(
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _create,
-        icon: const Icon(Icons.add),
-        label: const Text('Add beacon'),
+        icon: const Icon(Icons.add_rounded),
+        label: const Text('Add beacon', style: AppText.button),
       ),
       body: FutureBuilder<List<Json>>(
         future: _future,
@@ -40,124 +41,125 @@ class _BeaconsTabState extends ConsumerState<BeaconsTab> {
           final rows = snap.data!;
           if (rows.isEmpty) {
             return const EmptyState(
-              icon: Icons.bluetooth,
+              icon: Icons.settings_input_antenna_rounded,
               title: 'No beacons yet',
-              subtitle: 'Add one, then flash an ESP32 with its firmware config.',
+              subtitle:
+                  'Add a beacon, then flash an ESP32 with its firmware config. '
+                  'Place it in the staff room or a department office.',
             );
           }
-          return ListView.builder(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+          return ListView.separated(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
             itemCount: rows.length,
-            itemBuilder: (_, i) {
-              final b = rows[i];
-              final active = b['is_active'] == true;
-              final lastUsed = Fmt.parse(b['last_used_at']);
-              return Card(
-                margin: const EdgeInsets.only(bottom: 8),
-                child: ListTile(
-                  leading: Icon(
-                    Icons.bluetooth,
-                    color: active ? AppColors.primary : AppColors.textTertiary,
-                  ),
-                  title: Text(b['name'] as String? ?? ''),
-                  subtitle: Text(
-                    '${b['location'] ?? 'No location'} · RSSI ≥ ${b['rssi_threshold']} dBm\n'
-                    'Last used: ${lastUsed == null ? 'never' : '${Fmt.shortDate(lastUsed)} ${Fmt.time(lastUsed)}'}',
-                  ),
-                  isThreeLine: true,
-                  trailing: active ? null : const StatusBadge(label: 'Off', color: AppColors.error),
-                  onTap: () => _actions(b),
-                ),
-              );
-            },
+            separatorBuilder: (_, _) => const SizedBox(height: 10),
+            itemBuilder: (_, i) => _beaconCard(rows[i]),
           );
         },
       ),
     );
   }
 
-  Future<void> _create() async {
-    final name = TextEditingController();
-    final location = TextEditingController();
-    var rssi = -85.0;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('Add beacon'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: name,
-                decoration: const InputDecoration(labelText: 'Name (e.g. Staff Room A)'),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: location,
-                decoration: const InputDecoration(labelText: 'Where is it placed?'),
-              ),
-              const SizedBox(height: 10),
-              Text('Minimum signal: ${rssi.round()} dBm'),
-              Slider(
-                value: rssi,
-                min: -100,
-                max: -55,
-                divisions: 45,
-                onChanged: (v) => setLocal(() => rssi = v),
-              ),
-              const Text('-85 ≈ 10–20 m indoors · -70 ≈ same room', style: TextStyle(fontSize: 12)),
-            ],
+  Widget _beaconCard(Json b) {
+    final active = b['is_active'] == true;
+    final lastUsed = Fmt.parse(b['last_used_at']);
+    return AppCard(
+      onTap: () => _actions(b),
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        children: [
+          IconBadge(
+            Icons.settings_input_antenna_rounded,
+            color: active ? AppColors.primary : AppColors.textTertiary,
+            size: 46,
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, name.text.trim().length >= 2),
-              child: const Text('Create'),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(b['name'] as String? ?? '', style: AppText.h3),
+                Text(b['location'] as String? ?? 'Location not set', style: AppText.caption),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    StatusChip.tone(
+                      active ? 'Active' : 'Disabled',
+                      active ? AppColors.success : AppColors.error,
+                      dense: true,
+                    ),
+                    StatusChip.tone(
+                      '≥ ${b['rssi_threshold']} dBm',
+                      AppColors.primary,
+                      icon: Icons.network_cell_rounded,
+                      dense: true,
+                    ),
+                    StatusChip.tone(
+                      lastUsed == null ? 'Never used' : 'Used ${Fmt.shortDate(lastUsed)}',
+                      AppColors.notMarked,
+                      icon: Icons.history_rounded,
+                      dense: true,
+                    ),
+                  ],
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+          const Icon(Icons.chevron_right_rounded, color: AppColors.textTertiary),
+        ],
       ),
     );
-    if (ok != true) return;
-    try {
-      final created = await ref
-          .read(adminApiProvider)
-          .createBeacon(name.text.trim(), location.text.trim(), rssi.round());
-      _reload();
-      if (mounted) await _showFirmware(created);
-    } catch (e) {
-      if (mounted) showSnack(context, errorMessage(e), error: true);
-    }
+  }
+
+  Future<void> _create() async {
+    final created = await showModalBottomSheet<Json>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => const _CreateBeaconSheet(),
+    );
+    if (created == null) return;
+    _reload();
+    if (mounted) await _showFirmware(created);
   }
 
   Future<void> _actions(Json b) async {
     final id = b['id'] as String;
     final active = b['is_active'] == true;
     final api = ref.read(adminApiProvider);
+    Widget item(BuildContext ctx, String v, IconData icon, String title, String hint) => ListTile(
+      leading: IconBadge(icon, size: 40),
+      title: Text(title),
+      subtitle: Text(hint),
+      onTap: () => Navigator.pop(ctx, v),
+    );
     final action = await showModalBottomSheet<String>(
       context: context,
-      showDragHandle: true,
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            ListTile(title: Text(b['name'] as String? ?? ''), subtitle: Text(id)),
             ListTile(
-              leading: const Icon(Icons.memory),
-              title: const Text('Firmware config (secret)'),
-              onTap: () => Navigator.pop(ctx, 'firmware'),
+              title: Text(b['name'] as String? ?? '', style: AppText.h3),
+              subtitle: Text(id, style: AppText.caption.copyWith(fontFamily: 'monospace')),
             ),
-            ListTile(
-              leading: Icon(active ? Icons.toggle_off : Icons.toggle_on),
-              title: Text(active ? 'Deactivate' : 'Activate'),
-              onTap: () => Navigator.pop(ctx, 'toggle'),
+            const Divider(),
+            item(
+              ctx,
+              'firmware',
+              Icons.memory_rounded,
+              'Firmware config',
+              'Beacon ID and secret for secrets.h',
             ),
-            ListTile(
-              leading: const Icon(Icons.key),
-              title: const Text('Rotate secret (re-flash needed)'),
-              onTap: () => Navigator.pop(ctx, 'rotate'),
+            item(
+              ctx,
+              'toggle',
+              active ? Icons.toggle_off_outlined : Icons.toggle_on_outlined,
+              active ? 'Disable beacon' : 'Enable beacon',
+              active ? 'Stops accepting this beacon' : 'Accept this beacon again',
             ),
+            item(ctx, 'rotate', Icons.key_rounded, 'Rotate secret', 'You must re-flash the ESP32'),
+            const SizedBox(height: 8),
           ],
         ),
       ),
@@ -182,45 +184,145 @@ class _BeaconsTabState extends ConsumerState<BeaconsTab> {
 
   Future<void> _showFirmware(Json beacon) {
     final config = beacon['firmware_config'] as String? ?? '';
-    return showDialog<void>(
+    return showModalBottomSheet<void>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Firmware config'),
-        content: SingleChildScrollView(
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              const Text('Firmware config', style: AppText.h2),
+              const SizedBox(height: 6),
               const Text(
-                'Paste into firmware/staff_beacon/secrets.h, set your Wi-Fi, '
+                'Paste into firmware/staff_beacon/secrets.h, set your Wi-Fi name and password, '
                 'then flash the ESP32. Keep the secret private.',
+                style: AppText.body,
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               Container(
-                padding: const EdgeInsets.all(10),
-                color: const Color(0xFF111827),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F172A),
+                  borderRadius: BorderRadius.circular(14),
+                ),
                 child: SelectableText(
                   config,
                   style: const TextStyle(
                     fontFamily: 'monospace',
-                    fontSize: 11,
-                    color: Colors.greenAccent,
+                    fontSize: 11.5,
+                    height: 1.5,
+                    color: Color(0xFF86EFAC),
                   ),
                 ),
+              ),
+              const SizedBox(height: 16),
+              PrimaryButton(
+                label: 'Copy to clipboard',
+                icon: Icons.copy_rounded,
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: config));
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  if (mounted) showSnack(context, 'Copied');
+                },
               ),
             ],
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: config));
-              if (ctx.mounted) Navigator.pop(ctx);
-              if (mounted) showSnack(context, 'Copied');
-            },
-            child: const Text('Copy'),
+      ),
+    );
+  }
+}
+
+class _CreateBeaconSheet extends ConsumerStatefulWidget {
+  const _CreateBeaconSheet();
+
+  @override
+  ConsumerState<_CreateBeaconSheet> createState() => _CreateBeaconSheetState();
+}
+
+class _CreateBeaconSheetState extends ConsumerState<_CreateBeaconSheet> {
+  final _name = TextEditingController();
+  final _location = TextEditingController();
+  double _rssi = -85;
+  bool _busy = false;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _location.dispose();
+    super.dispose();
+  }
+
+  Future<void> _create() async {
+    if (_name.text.trim().length < 2) {
+      showSnack(context, 'Enter a beacon name', error: true);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final created = await ref
+          .read(adminApiProvider)
+          .createBeacon(_name.text.trim(), _location.text.trim(), _rssi.round());
+      if (mounted) Navigator.pop(context, created);
+    } catch (e) {
+      if (mounted) showSnack(context, errorMessage(e), error: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final range = _rssi >= -70
+        ? 'same room'
+        : _rssi >= -85
+        ? '≈ 10–20 m indoors'
+        : 'large area';
+    return Padding(
+      padding: EdgeInsets.fromLTRB(20, 0, 20, 20 + MediaQuery.of(context).viewInsets.bottom),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text('Add beacon', style: AppText.h2),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _name,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(
+              labelText: 'Name',
+              hintText: 'e.g. Staff Room – Block A',
+            ),
           ),
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _location,
+            decoration: const InputDecoration(labelText: 'Where is it placed?'),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              const Expanded(child: Text('Minimum signal', style: AppText.bodyStrong)),
+              Text('${_rssi.round()} dBm · $range', style: AppText.caption),
+            ],
+          ),
+          Slider(
+            value: _rssi,
+            min: -100,
+            max: -55,
+            divisions: 45,
+            onChanged: (v) => setState(() => _rssi = v),
+          ),
+          const SizedBox(height: 8),
+          PrimaryButton(
+            label: 'Create beacon',
+            icon: Icons.add_rounded,
+            busy: _busy,
+            onPressed: _create,
+          ),
         ],
       ),
     );

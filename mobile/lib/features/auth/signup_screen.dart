@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api_exception.dart';
-import '../../core/theme/colors.dart';
+import '../../core/theme/typography.dart';
 import '../../shared/widgets.dart';
 import 'auth_service.dart';
 
@@ -23,6 +23,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
   bool _busy = false;
+  bool _obscure = true;
   String? _error;
 
   @override
@@ -35,6 +36,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
 
   Future<void> _submit() async {
     if (!_form.currentState!.validate()) return;
+    FocusScope.of(context).unfocus();
     setState(() {
       _busy = true;
       _error = null;
@@ -56,11 +58,13 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
         await showDialog<void>(
           context: context,
           builder: (ctx) => AlertDialog(
+            icon: const Icon(Icons.mark_email_unread_outlined, size: 40),
             title: const Text('Confirm your email'),
             content: Text(
               'We sent a confirmation link to ${_email.text.trim()}. Open it, then sign in.',
+              textAlign: TextAlign.center,
             ),
-            actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+            actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
           ),
         );
       }
@@ -75,108 +79,143 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
   String? _required(String? v, String label) =>
       (v == null || v.trim().isEmpty) ? '$label is required' : null;
 
+  Widget _gap() => const SizedBox(height: 14);
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Create staff account')),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
-          child: Form(
-            key: _form,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'After signing up you will bind this phone, record your face, '
-                  'and wait for an admin to approve your account.',
-                  style: Theme.of(context).textTheme.bodyMedium,
+        child: Form(
+          key: _form,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 32),
+            children: [
+              const MessageBanner(
+                title: 'How activation works',
+                message:
+                    'After signing up you will register this phone and your face. '
+                    'The administrator then approves your account.',
+              ),
+              const SectionHeader('Personal details'),
+              AppCard(
+                child: Column(
+                  children: [
+                    TextFormField(
+                      controller: _name,
+                      textCapitalization: TextCapitalization.words,
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(
+                        labelText: 'Full name',
+                        prefixIcon: Icon(Icons.person_outline_rounded),
+                      ),
+                      validator: (v) => _required(v, 'Full name'),
+                    ),
+                    _gap(),
+                    TextFormField(
+                      controller: _phone,
+                      keyboardType: TextInputType.phone,
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(
+                        labelText: 'Mobile number (optional)',
+                        prefixIcon: Icon(Icons.phone_outlined),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 20),
-                TextFormField(
-                  controller: _name,
-                  textCapitalization: TextCapitalization.words,
-                  decoration: const InputDecoration(
-                    labelText: 'Full name',
-                    prefixIcon: Icon(Icons.person_outline),
-                  ),
-                  validator: (v) => _required(v, 'Full name'),
+              ),
+              const SectionHeader('Work details'),
+              AppCard(
+                child: Column(
+                  children: [
+                    TextFormField(
+                      controller: _employeeId,
+                      textCapitalization: TextCapitalization.characters,
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(
+                        labelText: 'Employee ID',
+                        prefixIcon: Icon(Icons.badge_outlined),
+                      ),
+                      validator: (v) => _required(v, 'Employee ID'),
+                    ),
+                    _gap(),
+                    TextFormField(
+                      controller: _department,
+                      textCapitalization: TextCapitalization.words,
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(
+                        labelText: 'Department',
+                        prefixIcon: Icon(Icons.apartment_outlined),
+                      ),
+                    ),
+                    _gap(),
+                    TextFormField(
+                      controller: _designation,
+                      textCapitalization: TextCapitalization.words,
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(
+                        labelText: 'Designation',
+                        prefixIcon: Icon(Icons.work_outline_rounded),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _employeeId,
-                  textCapitalization: TextCapitalization.characters,
-                  decoration: const InputDecoration(
-                    labelText: 'Employee ID',
-                    prefixIcon: Icon(Icons.badge_outlined),
-                  ),
-                  validator: (v) => _required(v, 'Employee ID'),
+              ),
+              const SectionHeader('Login details'),
+              AppCard(
+                child: Column(
+                  children: [
+                    TextFormField(
+                      controller: _email,
+                      keyboardType: TextInputType.emailAddress,
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(
+                        labelText: 'Official email',
+                        prefixIcon: Icon(Icons.mail_outline_rounded),
+                      ),
+                      validator: (v) =>
+                          (v == null || !v.contains('@')) ? 'Enter a valid email' : null,
+                    ),
+                    _gap(),
+                    TextFormField(
+                      controller: _password,
+                      obscureText: _obscure,
+                      decoration: InputDecoration(
+                        labelText: 'Password',
+                        helperText: 'At least 8 characters',
+                        prefixIcon: const Icon(Icons.lock_outline_rounded),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                          ),
+                          onPressed: () => setState(() => _obscure = !_obscure),
+                        ),
+                      ),
+                      validator: (v) =>
+                          (v == null || v.length < 8) ? 'Use at least 8 characters' : null,
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _department,
-                  textCapitalization: TextCapitalization.words,
-                  decoration: const InputDecoration(
-                    labelText: 'Department',
-                    prefixIcon: Icon(Icons.apartment_outlined),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _designation,
-                  textCapitalization: TextCapitalization.words,
-                  decoration: const InputDecoration(
-                    labelText: 'Designation',
-                    prefixIcon: Icon(Icons.work_outline),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _phone,
-                  keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(
-                    labelText: 'Phone (optional)',
-                    prefixIcon: Icon(Icons.phone_outlined),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _email,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(
-                    labelText: 'Official email',
-                    prefixIcon: Icon(Icons.mail_outline),
-                  ),
-                  validator: (v) => (v == null || !v.contains('@')) ? 'Enter a valid email' : null,
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _password,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Password (min 8 characters)',
-                    prefixIcon: Icon(Icons.lock_outline),
-                  ),
-                  validator: (v) =>
-                      (v == null || v.length < 8) ? 'Use at least 8 characters' : null,
-                ),
-                const SizedBox(height: 20),
-                if (_error != null) ...[
-                  Text(
-                    _error!,
-                    style: const TextStyle(color: AppColors.error),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                BusyButton(
-                  label: 'Create account',
-                  icon: Icons.person_add_alt,
-                  busy: _busy,
-                  onPressed: _submit,
-                ),
+              ),
+              const SizedBox(height: 20),
+              if (_error != null) ...[
+                MessageBanner(message: _error!, tone: BannerTone.error),
+                const SizedBox(height: 14),
               ],
-            ),
+              PrimaryButton(
+                label: 'Create account',
+                icon: Icons.person_add_alt_1_rounded,
+                busy: _busy,
+                onPressed: _submit,
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'By continuing you agree that your face signature (not your photo) is stored '
+                'for attendance verification only.',
+                style: AppText.caption,
+                textAlign: TextAlign.center,
+              ),
+            ],
           ),
         ),
       ),
