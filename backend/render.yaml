@@ -1,0 +1,25 @@
+# Render Blueprint — Staff Attendance API
+# Dashboard → New → Blueprint → pick this repo. Render reads this file from the
+# repo root or from backend/ (rootDir below points at the backend folder).
+services:
+  - type: web
+    name: staff-attendance-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: free          # sleeps after 15 min idle — the app pings /health on launch
+    region: singapore
+    healthCheckPath: /health
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: DEBUG
+        value: "false"
+      - key: ALLOWED_ORIGINS
+        value: "*"
