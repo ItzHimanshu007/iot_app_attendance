@@ -167,6 +167,7 @@ and the **Excel export**.
 | `BEACON_TOKEN_INVALID` | The ESP32 clock is not synced (no Wi-Fi at boot), or `TOKEN_WINDOW_SECONDS` ≠ backend `BEACON_WINDOW_SECONDS`, or the beacon secret was rotated without re-flashing. |
 | `BEACON_TOO_FAR` | Move closer, or lower the beacon's RSSI threshold in Admin → Beacons. |
 | Screen turns white during the face scan | Normal: in a dim room the screen becomes a fill light. If it still says "Too dark", face a window or tube light. |
+| "Face detection is not working on this phone (InputImageConverterError … NullPointerException)" | The release build's code shrinker (R8) removed parts of ML Kit. Fixed by `shrink=false` in `mobile/android/gradle.properties`: pull the latest code and rebuild. |
 | "The camera is not sending pictures" / "camera format not supported" | Close other apps using the camera and restart the app. If it persists, note the phone model: that phone needs a fix. |
 | `FACE_REENROLL_REQUIRED` | The face was enrolled with an older app version. Admin → Staff → *Reset face*, then enroll again. |
 | `FACE_MISMATCH` for the right person | Better light, no mask/cap. Check the scores in Admin → Alerts and adjust the threshold (default 0.55), or reset and re-enroll the face. |
