@@ -1,0 +1,76 @@
+name: smart_campus_app
+description: "Smart Campus BLE Attendance System"
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: ^3.12.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
+
+  # Routing
+  go_router: ^14.8.1
+
+  # Networking
+  dio: ^5.7.0
+
+  # Storage
+  flutter_secure_storage: ^9.2.4
+
+  # Device info
+  connectivity_plus: ^6.1.4
+  device_info_plus: ^11.2.1
+
+  # BLE
+  flutter_blue_plus: ^1.35.5
+  permission_handler: ^11.4.0
+
+  # Biometrics & Device Security
+  local_auth: ^2.3.0
+  local_auth_android: ^1.0.56
+  crypto: ^3.0.5
+
+  # Data classes
+  freezed_annotation: ^2.4.4
+  json_annotation: ^4.9.0
+
+  # UI
+  google_fonts: ^6.2.1
+  shimmer: ^3.0.0
+  fl_chart: ^0.69.0
+  url_launcher: ^6.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+  # Code generation
+  build_runner: ^2.4.14
+  freezed: ^2.5.8
+  json_serializable: ^6.9.4
+  riverpod_generator: ^2.6.3
+  custom_lint:
+  riverpod_lint: ^2.6.3
+  flutter_launcher_icons: ^0.14.4
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/icons/
+
+# ── Launcher Icon Configuration ──────────────────────────────────────────────
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: assets/icons/app_icon.png
+  adaptive_icon_foreground: assets/icons/app_icon.png
+  adaptive_icon_background: "#667A69"

@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+.git/
+.gitignore
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+tests/
+htmlcov/
+.coverage
+*.md
+pyproject.toml
+requirements-dev.txt

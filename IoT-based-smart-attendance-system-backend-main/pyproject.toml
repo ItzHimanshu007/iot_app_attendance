@@ -1,0 +1,56 @@
+[project]
+name = "smart-campus-attendance-backend"
+version = "0.1.0"
+description = "FastAPI orchestrator for IoT-based smart campus attendance"
+requires-python = ">=3.12"
+
+# ── Ruff (linter + formatter) ────────────────────────────
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["app"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "D", "UP", "B", "SIM", "RUF"]
+ignore = ["D100", "D104"]  # allow missing module/package docstrings
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ── Mypy (type checker) ──────────────────────────────────
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["paho.*", "supabase.*"]
+ignore_missing_imports = true
+
+# ── Pytest ────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short --strict-markers"
+markers = [
+    "integration: marks tests that require external services",
+]
+
+# ── Coverage ──────────────────────────────────────────────
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/__init__.py", "*/tests/*"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
