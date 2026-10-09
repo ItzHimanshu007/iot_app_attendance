@@ -247,10 +247,19 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
           'This phone\'s camera format ($_unsupportedFormat) is not supported. '
           'Please tell the administrator.';
     } else {
-      final detail = _lastFrameError == null ? '' : ' (${errorMessage(_lastFrameError!)})';
+      final detail = _lastFrameError == null ? '' : ' (${_brief(_lastFrameError!)})';
       reason = 'Face detection is not working on this phone$detail. Restart the app and try again.';
     }
     _fail(reason);
+  }
+
+  /// First line of an error, short enough for the screen (the full text goes to logcat).
+  static String _brief(Object error) {
+    final text = error is PlatformException
+        ? '${error.code}: ${error.message ?? ''}'
+        : errorMessage(error);
+    final line = text.split('\n').first.trim();
+    return line.length > 90 ? '${line.substring(0, 90)}…' : line;
   }
 
   // ── Frame loop ──────────────────────────────────────────────────────────────
@@ -267,7 +276,9 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
       if (!mounted || _finished || _phase == _Phase.failed) return;
       _handleFaces(frame, faces);
     } catch (e) {
-      _lastFrameError = e; // a dropped frame is harmless; the watchdog reports persistent errors
+      // A dropped frame is harmless; the watchdog reports persistent errors.
+      if (_lastFrameError == null) debugPrint('Face detection error: $e');
+      _lastFrameError = e;
     } finally {
       _busyFrame = false;
     }
