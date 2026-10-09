@@ -12,6 +12,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../../core/api_exception.dart';
 import '../../core/config.dart';
 import '../../core/theme/colors.dart';
+import '../../core/theme/typography.dart';
 import 'face_embedder.dart';
 import 'face_image.dart';
 import 'liveness.dart';
@@ -39,12 +40,16 @@ class FaceCaptureScreen extends StatefulWidget {
     required this.steps,
     this.samples = 1,
     this.deadline,
+    @visibleForTesting this.previewOnly = false,
   });
 
   final FaceCaptureMode mode;
   final List<String> steps;
   final int samples;
   final DateTime? deadline;
+
+  /// Renders the UI without opening the camera (screenshots/tests only).
+  final bool previewOnly;
 
   static Future<FaceCaptureResult?> open(
     BuildContext context, {
@@ -67,6 +72,8 @@ class FaceCaptureScreen extends StatefulWidget {
 }
 
 enum _Phase { starting, liveness, steady, capturing, failed }
+
+enum _Ring { neutral, ok, good, warn }
 
 class _RetryCapture implements Exception {
   const _RetryCapture(this.message);
@@ -107,6 +114,7 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
   bool _finished = false;
   int _steadyFrames = 0;
   int? _livenessFaceId;
+  _Ring _ring = _Ring.neutral;
   final List<List<double>> _embeddings = [];
 
   @override
@@ -125,6 +133,12 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
         setState(() {});
       }
     });
+    if (widget.previewOnly) {
+      _phase = _Phase.liveness;
+      _prompt = _liveness.current?.instruction ?? 'Look straight at the camera';
+      _ring = _Ring.ok;
+      return;
+    }
     _start();
   }
 
@@ -204,19 +218,23 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
   void _handleFaces(List<Face> faces, double shortSide) {
     if (faces.isEmpty) {
       _steadyFrames = 0;
+      _ring = _Ring.warn;
       return _setPrompt('Place your face inside the oval');
     }
     if (faces.length > 1) {
       _steadyFrames = 0;
+      _ring = _Ring.warn;
       return _setPrompt('Only your face should be visible');
     }
     final face = faces.first;
     if (face.boundingBox.width < shortSide * 0.28) {
       _steadyFrames = 0;
+      _ring = _Ring.warn;
       return _setPrompt('Move a little closer');
     }
 
     if (_phase == _Phase.liveness) {
+      _ring = _Ring.ok;
       if (_liveness.update(face)) HapticFeedback.lightImpact();
       _livenessFaceId = face.trackingId ?? _livenessFaceId;
       if (_liveness.isDone) {
@@ -234,11 +252,13 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
       return _setPrompt('Face changed — please repeat the steps');
     }
     if (LivenessTracker.isGoodCaptureFrame(face)) {
+      _ring = _Ring.good;
       _steadyFrames++;
       _setPrompt('Hold still…');
       if (_steadyFrames >= 3) _capture();
     } else {
       _steadyFrames = 0;
+      _ring = _Ring.neutral;
       _setPrompt('Look straight at the camera with your eyes open');
     }
   }
@@ -362,25 +382,20 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
 
   // ── UI ──────────────────────────────────────────────────────────────────────
 
+  Color get _ringColor => switch (_ring) {
+    _Ring.good => const Color(0xFF22C55E),
+    _Ring.warn => AppColors.gold,
+    _Ring.ok => const Color(0xFF93C5FD),
+    _Ring.neutral => Colors.white70,
+  };
+
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
     final remaining = _deadline.difference(DateTime.now()).inSeconds.clamp(0, 999);
+    final failed = _phase == _Phase.failed;
     return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
-        title: Text(widget.mode == FaceCaptureMode.enroll ? 'Face enrollment' : 'Verify your face'),
-        actions: [
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: Text('${remaining}s', style: const TextStyle(color: Colors.white70)),
-            ),
-          ),
-        ],
-      ),
+      backgroundColor: const Color(0xFF020617),
       body: Column(
         children: [
           Expanded(
@@ -389,9 +404,76 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
               children: [
                 if (controller != null && controller.value.isInitialized)
                   Center(child: CameraPreview(controller))
-                else if (_phase != _Phase.failed)
+                else if (widget.previewOnly)
+                  const DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Color(0xFF1E293B), Color(0xFF0F172A)],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                      ),
+                    ),
+                    child: Center(
+                      child: Icon(Icons.face_rounded, size: 160, color: Color(0x33FFFFFF)),
+                    ),
+                  )
+                else if (!failed)
                   const Center(child: CircularProgressIndicator(color: Colors.white)),
-                const IgnorePointer(child: CustomPaint(painter: _OvalMaskPainter())),
+                IgnorePointer(
+                  child: CustomPaint(painter: _OvalMaskPainter(ringColor: _ringColor)),
+                ),
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 4, 16, 0),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            tooltip: 'Cancel',
+                            color: Colors.white,
+                            icon: const Icon(Icons.close_rounded),
+                            onPressed: () => Navigator.of(context).maybePop(),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              widget.mode == FaceCaptureMode.enroll
+                                  ? 'Face enrollment'
+                                  : 'Face verification',
+                              style: AppText.h3.copyWith(color: Colors.white),
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: remaining <= 15
+                                  ? AppColors.error.withValues(alpha: 0.85)
+                                  : Colors.white.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.timer_outlined, size: 15, color: Colors.white),
+                                const SizedBox(width: 6),
+                                Text(
+                                  '${remaining}s',
+                                  style: AppText.caption.copyWith(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -403,22 +485,51 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
 
   Widget _buildPanel(BuildContext context) {
     final failed = _phase == _Phase.failed;
+    final total = _liveness.steps.length + (widget.samples > 1 ? 1 : 0);
+    final doneSteps =
+        _liveness.progress + (widget.samples > 1 && _embeddings.length >= widget.samples ? 1 : 0);
     return Container(
       width: double.infinity,
-      color: const Color(0xFF111827),
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 28),
+      decoration: const BoxDecoration(
+        color: Color(0xFF0F172A),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
       child: SafeArea(
         top: false,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (!failed && total > 0) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  for (var i = 0; i < total; i++)
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 250),
+                      width: i == doneSteps ? 26 : 8,
+                      height: 8,
+                      margin: const EdgeInsets.symmetric(horizontal: 3),
+                      decoration: BoxDecoration(
+                        color: i < doneSteps
+                            ? const Color(0xFF22C55E)
+                            : i == doneSteps
+                            ? Colors.white
+                            : Colors.white24,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 16),
+            ],
+            if (failed) const Icon(Icons.error_outline_rounded, color: Color(0xFFFCA5A5), size: 34),
             Text(
               failed ? (_error ?? 'Something went wrong') : _prompt,
               textAlign: TextAlign.center,
-              style: TextStyle(
-                color: failed ? AppColors.error : Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.w600,
+              style: AppText.h2.copyWith(
+                color: failed ? const Color(0xFFFCA5A5) : Colors.white,
+                fontSize: 19,
               ),
             ),
             const SizedBox(height: 14),
@@ -429,30 +540,42 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> with WidgetsBindi
               children: [
                 for (var i = 0; i < _liveness.steps.length; i++)
                   _StepChip(
-                    label: _liveness.steps[i].wire.replaceAll('_', ' '),
+                    label: _liveness.steps[i].label,
                     done: i < _liveness.progress,
                     active: i == _liveness.progress && _phase == _Phase.liveness,
                   ),
                 if (widget.samples > 1)
                   _StepChip(
-                    label: 'samples ${_embeddings.length}/${widget.samples}',
+                    label: 'Photos ${_embeddings.length}/${widget.samples}',
                     done: _embeddings.length >= widget.samples,
                     active: _phase == _Phase.steady || _phase == _Phase.capturing,
                   ),
               ],
             ),
-            const SizedBox(height: 12),
-            const Text(
-              'Your photo is never stored or uploaded — only a face signature is sent.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white54, fontSize: 12),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.lock_outline_rounded, size: 14, color: Colors.white54),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    'Processed on this phone. Your photo is never stored or uploaded.',
+                    textAlign: TextAlign.center,
+                    style: AppText.caption.copyWith(color: Colors.white54, fontSize: 12),
+                  ),
+                ),
+              ],
             ),
             if (failed) ...[
               const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
-                child: OutlinedButton(
-                  style: OutlinedButton.styleFrom(foregroundColor: Colors.white),
+                child: FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: AppColors.text,
+                  ),
                   onPressed: () => Navigator.of(context).pop(),
                   child: const Text('Close'),
                 ),
@@ -475,24 +598,30 @@ class _StepChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = done
-        ? AppColors.success
+        ? const Color(0xFF22C55E)
         : active
-        ? AppColors.primaryLight
+        ? Colors.white
         : Colors.white38;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
       decoration: BoxDecoration(
+        color: active ? Colors.white.withValues(alpha: 0.1) : Colors.transparent,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color),
+        border: Border.all(color: color.withValues(alpha: done || active ? 0.9 : 0.4)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(done ? Icons.check_circle : Icons.radio_button_unchecked, size: 16, color: color),
+          Icon(done ? Icons.check_circle_rounded : Icons.circle_outlined, size: 15, color: color),
           const SizedBox(width: 6),
           Text(
             label,
-            style: TextStyle(color: color, fontWeight: FontWeight.w600),
+            style: TextStyle(
+              fontFamily: AppText.heading,
+              fontSize: 12.5,
+              color: color,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),
@@ -500,32 +629,34 @@ class _StepChip extends StatelessWidget {
   }
 }
 
-/// Darkens everything except an oval guide in the middle.
+/// Darkens everything except an oval guide; the ring colour reflects face quality.
 class _OvalMaskPainter extends CustomPainter {
-  const _OvalMaskPainter();
+  const _OvalMaskPainter({required this.ringColor});
+
+  final Color ringColor;
 
   @override
   void paint(Canvas canvas, Size size) {
     final oval = Rect.fromCenter(
-      center: Offset(size.width / 2, size.height * 0.46),
-      width: size.width * 0.68,
-      height: size.height * 0.62,
+      center: Offset(size.width / 2, size.height * 0.47),
+      width: size.width * 0.70,
+      height: size.height * 0.60,
     );
     final mask = Path.combine(
       PathOperation.difference,
       Path()..addRect(Offset.zero & size),
       Path()..addOval(oval),
     );
-    canvas.drawPath(mask, Paint()..color = Colors.black.withValues(alpha: 0.55));
+    canvas.drawPath(mask, Paint()..color = const Color(0xFF020617).withValues(alpha: 0.62));
     canvas.drawOval(
       oval,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 3
-        ..color = Colors.white70,
+        ..strokeWidth = 4
+        ..color = ringColor,
     );
   }
 
   @override
-  bool shouldRepaint(covariant _OvalMaskPainter oldDelegate) => false;
+  bool shouldRepaint(covariant _OvalMaskPainter oldDelegate) => oldDelegate.ringColor != ringColor;
 }

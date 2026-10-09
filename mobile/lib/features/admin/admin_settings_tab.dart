@@ -7,11 +7,13 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../core/api_exception.dart';
 import '../../core/formatters.dart';
+import '../../core/theme/colors.dart';
+import '../../core/theme/typography.dart';
 import '../../shared/widgets.dart';
 import '../location/location_service.dart';
 import 'admin_api.dart';
 
-/// Campus rules (location, office hours, thresholds) + Excel export.
+/// Campus rules (location, office hours, thresholds) + Excel reports.
 class SettingsTab extends ConsumerStatefulWidget {
   const SettingsTab({super.key});
 
@@ -87,7 +89,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
       _lat.text = fix.latitude.toStringAsFixed(6);
       _lng.text = fix.longitude.toStringAsFixed(6);
     });
-    showSnack(context, 'Accuracy ±${fix.accuracy.round()} m — save to apply');
+    showSnack(context, 'Location set (±${fix.accuracy.round()} m). Save to apply.');
   }
 
   Future<void> _save() async {
@@ -108,7 +110,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
       });
       if (mounted) showSnack(context, 'Settings saved');
     } on FormatException {
-      if (mounted) showSnack(context, 'Check the numbers you entered', error: true);
+      if (mounted) showSnack(context, 'Please check the numbers you entered', error: true);
     } catch (e) {
       if (mounted) showSnack(context, errorMessage(e), error: true);
     } finally {
@@ -128,7 +130,7 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
       await SharePlus.instance.share(
         ShareParams(
           files: [XFile(file.path)],
-          text: 'Staff attendance ${Fmt.apiDate(_from)} → ${Fmt.apiDate(_to)}',
+          text: 'Staff attendance ${Fmt.apiDate(_from)} to ${Fmt.apiDate(_to)}',
         ),
       );
     } catch (e) {
@@ -138,174 +140,237 @@ class _SettingsTabState extends ConsumerState<SettingsTab> {
     }
   }
 
+  Future<DateTime?> _pickDate(DateTime initial) => showDatePicker(
+    context: context,
+    initialDate: initial,
+    firstDate: DateTime(2024),
+    lastDate: DateTime.now(),
+  );
+
+  Widget _numberField(TextEditingController c, String label, {String? suffix}) => TextField(
+    controller: c,
+    keyboardType: TextInputType.number,
+    decoration: InputDecoration(labelText: label, suffixText: suffix),
+  );
+
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) return ErrorView(message: _error!, onRetry: _load);
-    final theme = Theme.of(context);
+    const gap = SizedBox(height: 12);
+
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
       children: [
-        Text('Export', style: theme.textTheme.titleMedium),
-        const SizedBox(height: 8),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () async {
-                          final d = await showDatePicker(
-                            context: context,
-                            initialDate: _from,
-                            firstDate: DateTime(2024),
-                            lastDate: DateTime.now(),
-                          );
-                          if (d != null) setState(() => _from = d);
-                        },
-                        child: Text('From ${Fmt.shortDate(_from)}'),
-                      ),
+        const SectionHeader('Reports'),
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Row(
+                children: [
+                  IconBadge(Icons.table_view_rounded, color: AppColors.success, size: 40),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Excel attendance report', style: AppText.h3),
+                        Text('Daily log + per-staff summary', style: AppText.caption),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () async {
-                          final d = await showDatePicker(
-                            context: context,
-                            initialDate: _to,
-                            firstDate: DateTime(2024),
-                            lastDate: DateTime.now(),
-                          );
-                          if (d != null) setState(() => _to = d);
-                        },
-                        child: Text('To ${Fmt.shortDate(_to)}'),
-                      ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.event_rounded, size: 18),
+                      label: Text(Fmt.shortDate(_from)),
+                      onPressed: () async {
+                        final d = await _pickDate(_from);
+                        if (d != null) setState(() => _from = d);
+                      },
                     ),
-                  ],
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    child: Icon(
+                      Icons.arrow_forward_rounded,
+                      size: 18,
+                      color: AppColors.textTertiary,
+                    ),
+                  ),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.event_rounded, size: 18),
+                      label: Text(Fmt.shortDate(_to)),
+                      onPressed: () async {
+                        final d = await _pickDate(_to);
+                        if (d != null) setState(() => _to = d);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              gap,
+              PrimaryButton(
+                label: 'Download & share',
+                icon: Icons.download_rounded,
+                busy: _exporting,
+                onPressed: _export,
+                color: AppColors.success,
+              ),
+            ],
+          ),
+        ),
+        const SectionHeader('Institution'),
+        AppCard(
+          child: Column(
+            children: [
+              TextField(
+                controller: _name,
+                decoration: const InputDecoration(labelText: 'Campus name'),
+              ),
+              gap,
+              TextField(
+                controller: _timezone,
+                decoration: const InputDecoration(
+                  labelText: 'Timezone',
+                  helperText: 'e.g. Asia/Kolkata',
                 ),
-                const SizedBox(height: 10),
-                BusyButton(
-                  label: 'Download Excel report',
-                  icon: Icons.table_view,
-                  busy: _exporting,
-                  onPressed: _export,
+              ),
+            ],
+          ),
+        ),
+        const SectionHeader('Office hours'),
+        AppCard(
+          child: Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () async {
+                    final t = await showTimePicker(context: context, initialTime: _start);
+                    if (t != null) setState(() => _start = t);
+                  },
+                  child: InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Office starts',
+                      suffixIcon: Icon(Icons.schedule_rounded),
+                    ),
+                    child: Text(_start.format(context), style: AppText.bodyStrong),
+                  ),
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(child: _numberField(_grace, 'Late after', suffix: 'min')),
+            ],
+          ),
+        ),
+        const SectionHeader('Campus location'),
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _lat,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                        signed: true,
+                      ),
+                      decoration: const InputDecoration(labelText: 'Latitude'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextField(
+                      controller: _lng,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                        signed: true,
+                      ),
+                      decoration: const InputDecoration(labelText: 'Longitude'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _useMyLocation,
+                  icon: const Icon(Icons.my_location_rounded, size: 18),
+                  label: const Text('Use my current location'),
+                ),
+              ),
+              Row(
+                children: [
+                  Expanded(child: _numberField(_radius, 'Radius', suffix: 'm')),
+                  const SizedBox(width: 12),
+                  Expanded(child: _numberField(_accuracy, 'Max GPS error', suffix: 'm')),
+                ],
+              ),
+              const SizedBox(height: 16),
+              const Text('GPS check', style: AppText.bodyStrong),
+              const SizedBox(height: 8),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'off', label: Text('Off')),
+                  ButtonSegment(value: 'flag', label: Text('Flag')),
+                  ButtonSegment(value: 'enforce', label: Text('Enforce')),
+                ],
+                selected: {_mode},
+                onSelectionChanged: (v) => setState(() => _mode = v.first),
+                showSelectedIcon: false,
+              ),
+              const SizedBox(height: 8),
+              Text(switch (_mode) {
+                'off' => 'Only the campus beacon is checked.',
+                'enforce' => 'Check-ins outside the radius are rejected.',
+                _ => 'Check-ins outside the radius are recorded and flagged for review.',
+              }, style: AppText.caption),
+            ],
+          ),
+        ),
+        const SectionHeader('Face verification'),
+        AppCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Expanded(child: Text('Match threshold', style: AppText.bodyStrong)),
+                  StatusChip.tone(_threshold.toStringAsFixed(2), AppColors.primary),
+                ],
+              ),
+              Slider(
+                value: _threshold,
+                min: 0.4,
+                max: 0.85,
+                divisions: 45,
+                onChanged: (v) => setState(() => _threshold = v),
+              ),
+              const Text(
+                'Higher is stricter. The same person usually scores 0.65–0.90 — check the '
+                'scores in Alerts before changing this.',
+                style: AppText.caption,
+              ),
+            ],
           ),
         ),
         const SizedBox(height: 20),
-        Text('Campus rules', style: theme.textTheme.titleMedium),
-        const SizedBox(height: 8),
-        TextField(
-          controller: _name,
-          decoration: const InputDecoration(labelText: 'Campus name'),
+        PrimaryButton(
+          label: 'Save settings',
+          icon: Icons.save_outlined,
+          busy: _saving,
+          onPressed: _save,
         ),
-        const SizedBox(height: 10),
-        TextField(
-          controller: _timezone,
-          decoration: const InputDecoration(labelText: 'Timezone (e.g. Asia/Kolkata)'),
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _lat,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                decoration: const InputDecoration(labelText: 'Latitude'),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextField(
-                controller: _lng,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                decoration: const InputDecoration(labelText: 'Longitude'),
-              ),
-            ),
-          ],
-        ),
-        TextButton.icon(
-          onPressed: _useMyLocation,
-          icon: const Icon(Icons.my_location),
-          label: const Text('Use my current location as campus centre'),
-        ),
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _radius,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Radius (m)'),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextField(
-                controller: _accuracy,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Max GPS error (m)'),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        DropdownButtonFormField<String>(
-          initialValue: _mode,
-          decoration: const InputDecoration(labelText: 'GPS geofence'),
-          items: const [
-            DropdownMenuItem(value: 'off', child: Text('Off — beacon only')),
-            DropdownMenuItem(value: 'flag', child: Text('Flag — record & highlight outside')),
-            DropdownMenuItem(value: 'enforce', child: Text('Enforce — reject outside campus')),
-          ],
-          onChanged: (v) => setState(() => _mode = v ?? _mode),
-        ),
-        const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Office starts'),
-                subtitle: Text(_start.format(context)),
-                trailing: const Icon(Icons.schedule),
-                onTap: () async {
-                  final t = await showTimePicker(context: context, initialTime: _start);
-                  if (t != null) setState(() => _start = t);
-                },
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextField(
-                controller: _grace,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Late after (min)'),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        Text('Face match threshold: ${_threshold.toStringAsFixed(2)}'),
-        Slider(
-          value: _threshold,
-          min: 0.4,
-          max: 0.85,
-          divisions: 45,
-          onChanged: (v) => setState(() => _threshold = v),
-        ),
-        Text(
-          'Higher = stricter. Check the face scores in Alerts / Today to tune it '
-          '(same person is usually 0.65–0.9).',
-          style: theme.textTheme.bodySmall,
-        ),
-        const SizedBox(height: 16),
-        BusyButton(label: 'Save settings', icon: Icons.save, busy: _saving, onPressed: _save),
-        const SizedBox(height: 24),
       ],
     );
   }

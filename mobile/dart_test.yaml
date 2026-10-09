@@ -1,0 +1,5 @@
+tags:
+  screenshots:
+    # Renders docs/screenshots/*.png. Run explicitly:
+    #   flutter test --tags screenshots --run-skipped --update-goldens
+    skip: "Screenshot generator — run with --tags screenshots --run-skipped --update-goldens"

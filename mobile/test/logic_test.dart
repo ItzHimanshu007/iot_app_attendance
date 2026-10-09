@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
+import 'package:staff_attendance/core/formatters.dart';
 import 'package:staff_attendance/features/attendance/attendance_api.dart';
 import 'package:staff_attendance/features/beacon/beacon_protocol.dart';
 import 'package:staff_attendance/features/face/face_image.dart';
@@ -147,6 +148,23 @@ void main() {
             .nextAction,
         isNull,
       );
+    });
+  });
+
+  group('Names (Indian staff titles)', () {
+    test('initials skip honorifics', () {
+      expect(Fmt.initials('Dr. Asha Rao'), 'AR');
+      expect(Fmt.initials('Prof. Rahul Kumar Mehta'), 'RM');
+      expect(Fmt.initials('Smt Kavita'), 'K');
+      expect(Fmt.initials('Neha Sharma'), 'NS');
+      expect(Fmt.initials('Dr.'), 'D');
+      expect(Fmt.initials(''), '?');
+    });
+
+    test('short name keeps the title', () {
+      expect(Fmt.shortName('Dr. Asha Rao'), 'Dr. Asha');
+      expect(Fmt.shortName('Neha Sharma'), 'Neha');
+      expect(Fmt.shortName('Mr Vikram Singh'), 'Mr Vikram');
     });
   });
 }

@@ -2,13 +2,14 @@ import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 
 /// Liveness actions the server can ask for (wire names match the backend).
 enum LivenessStep {
-  blink('blink', 'Blink your eyes'),
-  smile('smile', 'Smile'),
-  turnHead('turn_head', 'Turn your head to one side, then look back');
+  blink('blink', 'Blink', 'Blink your eyes slowly'),
+  smile('smile', 'Smile', 'Give a big smile'),
+  turnHead('turn_head', 'Turn head', 'Turn your head to one side, then look back');
 
-  const LivenessStep(this.wire, this.instruction);
+  const LivenessStep(this.wire, this.label, this.instruction);
 
   final String wire;
+  final String label;
   final String instruction;
 
   static LivenessStep? fromWire(String value) {
