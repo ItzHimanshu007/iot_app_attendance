@@ -1,7 +1,11 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/api_exception.dart';
+import '../../core/config.dart';
 import '../../core/error_text.dart';
 import '../../core/formatters.dart';
 import '../../core/theme/colors.dart';
@@ -12,7 +16,7 @@ import 'admin_beacons_tab.dart';
 import 'admin_settings_tab.dart';
 import 'admin_staff_tab.dart';
 
-/// Admin console: today's roster, approvals, proxy alerts, beacons, settings.
+/// Admin console: today's overview, approvals, proxy alerts, beacons, settings.
 class AdminScreen extends StatelessWidget {
   const AdminScreen({super.key, this.embedded = false, this.initialTab = 0});
 
@@ -26,45 +30,142 @@ class AdminScreen extends StatelessWidget {
       length: 5,
       initialIndex: initialTab,
       child: Scaffold(
-        appBar: AppBar(
-          automaticallyImplyLeading: !embedded,
-          title: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Admin console'),
-              Text(
-                'Attendance management',
-                style: TextStyle(
-                  fontFamily: AppText.bodyFamily,
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w400,
-                  color: AppColors.textSecondary,
-                ),
+        backgroundColor: AppColors.background,
+        body: Column(
+          children: [
+            _AdminHeader(embedded: embedded),
+            const Expanded(
+              child: TabBarView(
+                children: [RosterTab(), StaffTab(), AlertsTab(), BeaconsTab(), SettingsTab()],
               ),
-            ],
-          ),
-          bottom: const TabBar(
-            isScrollable: true,
-            tabAlignment: TabAlignment.start,
-            indicatorSize: TabBarIndicatorSize.label,
-            tabs: [
-              Tab(text: 'Overview'),
-              Tab(text: 'Staff'),
-              Tab(text: 'Alerts'),
-              Tab(text: 'Beacons'),
-              Tab(text: 'Settings'),
-            ],
-          ),
-        ),
-        body: const TabBarView(
-          children: [RosterTab(), StaffTab(), AlertsTab(), BeaconsTab(), SettingsTab()],
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-// ── Overview / roster ─────────────────────────────────────────────────────────
+/// Navy header with the console title and all five sections visible at once.
+class _AdminHeader extends StatelessWidget {
+  const _AdminHeader({required this.embedded});
+
+  final bool embedded;
+
+  static const _tabs = [
+    (Icons.dashboard_outlined, 'Overview'),
+    (Icons.badge_outlined, 'Staff'),
+    (Icons.gpp_maybe_outlined, 'Alerts'),
+    (Icons.settings_input_antenna_rounded, 'Beacons'),
+    (Icons.tune_rounded, 'Settings'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light,
+      child: Container(
+        decoration: const BoxDecoration(gradient: AppColors.headerGradient),
+        child: SafeArea(
+          bottom: false,
+          child: Column(
+            children: [
+              Padding(
+                padding: EdgeInsets.fromLTRB(embedded ? 20 : 4, 14, 20, 10),
+                child: Row(
+                  children: [
+                    if (!embedded) const BackButton(color: Colors.white),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'ADMIN CONSOLE',
+                            style: AppText.overline.copyWith(color: AppColors.gold),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            AppConfig.collegeName,
+                            style: AppText.h2.copyWith(color: Colors.white),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(Icons.admin_panel_settings_outlined, color: Colors.white),
+                    ),
+                  ],
+                ),
+              ),
+              TabBar(
+                labelColor: Colors.white,
+                unselectedLabelColor: Colors.white.withValues(alpha: 0.62),
+                indicatorColor: AppColors.gold,
+                indicatorWeight: 3,
+                indicatorSize: TabBarIndicatorSize.tab,
+                indicatorPadding: const EdgeInsets.symmetric(horizontal: 14),
+                dividerColor: Colors.transparent,
+                labelPadding: EdgeInsets.zero,
+                overlayColor: WidgetStateProperty.all(Colors.white.withValues(alpha: 0.06)),
+                tabs: [
+                  for (final (icon, label) in _tabs)
+                    Tab(
+                      height: 60,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(icon, size: 21),
+                          const SizedBox(height: 4),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              label,
+                              style: const TextStyle(
+                                fontFamily: AppText.heading,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Overview ─────────────────────────────────────────────────────────────────
+
+class _Overview {
+  const _Overview(this.roster, this.failedAttempts, this.staff);
+
+  final Json roster;
+  final List<Json> failedAttempts;
+  final List<Json> staff;
+}
+
+/// Roster statuses in display order, with the label used on this screen.
+const _statusOrder = [
+  ('present', 'On time'),
+  ('late', 'Late'),
+  ('on_leave', 'On leave'),
+  ('absent', 'Absent'),
+  ('not_marked', 'Not marked'),
+];
 
 class RosterTab extends ConsumerStatefulWidget {
   const RosterTab({super.key});
@@ -75,20 +176,28 @@ class RosterTab extends ConsumerStatefulWidget {
 
 class _RosterTabState extends ConsumerState<RosterTab> {
   DateTime _day = DateTime.now();
-  late Future<Json> _future = _load();
+  String _filter = 'all';
+  String _query = '';
+  late Future<_Overview> _future = _load();
 
-  Future<Json> _load() => ref.read(adminApiProvider).roster(_day);
+  Future<_Overview> _load() async {
+    final api = ref.read(adminApiProvider);
+    final roster = api.roster(_day);
+    // The extras only feed "Needs attention"; the overview still works without them.
+    final attempts = api.attempts(_day).catchError((Object _) => <Json>[]);
+    final staff = api.staff().catchError((Object _) => <Json>[]);
+    return _Overview(await roster, await attempts, await staff);
+  }
+
   void _reload() => setState(() => _future = _load());
 
-  bool get _isToday {
-    final now = DateTime.now();
-    return _day.year == now.year && _day.month == now.month && _day.day == now.day;
-  }
+  bool get _isToday => DateUtils.isSameDay(_day, DateTime.now());
 
   void _shift(int days) {
     final next = _day.add(Duration(days: days));
     if (next.isAfter(DateTime.now())) return;
     _day = next;
+    _filter = 'all';
     _reload();
   }
 
@@ -101,13 +210,14 @@ class _RosterTabState extends ConsumerState<RosterTab> {
     );
     if (picked != null) {
       _day = picked;
+      _filter = 'all';
       _reload();
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<Json>(
+    return FutureBuilder<_Overview>(
       future: _future,
       builder: (context, snap) {
         if (snap.connectionState != ConnectionState.done) {
@@ -115,164 +225,32 @@ class _RosterTabState extends ConsumerState<RosterTab> {
         }
         if (snap.hasError) return ErrorView(message: errorMessage(snap.error!), onRetry: _reload);
         final data = snap.data!;
-        final summary = (data['summary'] as Map).cast<String, dynamic>();
-        final rows = (data['rows'] as List).cast<Json>();
+        final summary = (data.roster['summary'] as Map).cast<String, dynamic>();
+        final rows = (data.roster['rows'] as List).cast<Json>();
         int n(String k) => (summary[k] as num?)?.toInt() ?? 0;
-        final total = n('total');
-        final marked = n('present') + n('late');
-        final rate = total == 0 ? 0.0 : marked / total;
+        final approvals = data.staff.where((s) => s['next_step'] == 'await_approval').length;
 
         return RefreshIndicator(
           onRefresh: () async => _reload(),
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
             children: [
-              AppCard(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                child: Row(
-                  children: [
-                    IconButton(
-                      onPressed: () => _shift(-1),
-                      icon: const Icon(Icons.chevron_left_rounded),
-                    ),
-                    Expanded(
-                      child: InkWell(
-                        onTap: _pickDay,
-                        borderRadius: BorderRadius.circular(10),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          child: Column(
-                            children: [
-                              Text(_isToday ? 'Today' : Fmt.weekday(_day), style: AppText.overline),
-                              Text(Fmt.date(_day), style: AppText.h3),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: _isToday ? null : () => _shift(1),
-                      icon: const Icon(Icons.chevron_right_rounded),
-                    ),
-                  ],
-                ),
+              _dayBar(),
+              const SizedBox(height: 14),
+              _SummaryCard(
+                counts: {for (final (key, _) in _statusOrder) key: n(key)},
+                total: n('total'),
+                checkedOut: n('checked_out'),
+                title: _isToday ? "Today's attendance" : 'Attendance on ${Fmt.date(_day)}',
               ),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  gradient: AppColors.headerGradient,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          '${(rate * 100).round()}%',
-                          style: AppText.display.copyWith(color: Colors.white),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.only(bottom: 5),
-                            child: Text(
-                              'attendance · $marked of $total staff',
-                              style: AppText.body.copyWith(color: Colors.white70),
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: LinearProgressIndicator(
-                        value: rate,
-                        minHeight: 8,
-                        color: AppColors.gold,
-                        backgroundColor: Colors.white.withValues(alpha: 0.18),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              GridView.count(
-                crossAxisCount: 3,
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                mainAxisSpacing: 10,
-                crossAxisSpacing: 10,
-                childAspectRatio: 0.86,
-                children: [
-                  StatTile(
-                    label: 'On time',
-                    value: '${n('present')}',
-                    icon: Icons.check_circle_outline_rounded,
-                    color: AppColors.success,
-                  ),
-                  StatTile(
-                    label: 'Late',
-                    value: '${n('late')}',
-                    icon: Icons.timer_outlined,
-                    color: AppColors.warning,
-                  ),
-                  StatTile(
-                    label: 'Not marked',
-                    value: '${n('not_marked')}',
-                    icon: Icons.help_outline_rounded,
-                    color: AppColors.notMarked,
-                  ),
-                  StatTile(
-                    label: 'On leave',
-                    value: '${n('on_leave')}',
-                    icon: Icons.beach_access_outlined,
-                    color: AppColors.info,
-                  ),
-                  StatTile(
-                    label: 'Absent',
-                    value: '${n('absent')}',
-                    icon: Icons.cancel_outlined,
-                    color: AppColors.error,
-                  ),
-                  StatTile(
-                    label: 'Flagged',
-                    value: '${n('flagged')}',
-                    icon: Icons.flag_outlined,
-                    color: AppColors.gold,
-                  ),
-                ],
+              const SectionHeader('Needs attention'),
+              _attention(
+                approvals: approvals,
+                failed: _isToday ? data.failedAttempts.length : 0,
+                flagged: n('flagged'),
               ),
               SectionHeader('Staff · ${rows.length}'),
-              if (rows.isEmpty)
-                const AppCard(
-                  child: EmptyState(
-                    icon: Icons.people_outline_rounded,
-                    title: 'No active staff yet',
-                  ),
-                )
-              else
-                AppCard(
-                  padding: EdgeInsets.zero,
-                  child: Column(
-                    children: [
-                      for (var i = 0; i < rows.length; i++) ...[
-                        if (i > 0) const Divider(indent: 70),
-                        _rosterRow(rows[i]),
-                      ],
-                    ],
-                  ),
-                ),
-              const SizedBox(height: 10),
-              const Text(
-                'Tap a staff member to mark attendance manually.',
-                style: AppText.caption,
-                textAlign: TextAlign.center,
-              ),
+              ..._roster(rows),
             ],
           ),
         );
@@ -280,48 +258,283 @@ class _RosterTabState extends ConsumerState<RosterTab> {
     );
   }
 
-  Widget _rosterRow(Json row) {
-    final staff = (row['staff'] as Map).cast<String, dynamic>();
-    final record = (row['attendance'] as Map?)?.cast<String, dynamic>();
-    final flags = ((record?['flags'] as List?) ?? const []);
-    final inAt = Fmt.parse(record?['check_in_at']);
-    final outAt = Fmt.parse(record?['check_out_at']);
-    final name = staff['full_name'] as String? ?? '';
-    final initials = Fmt.initials(name);
-    final detail = record == null
-        ? (staff['department'] as String? ?? staff['employee_id'] as String? ?? '')
-        : record['is_manual'] == true
-        ? 'Manual · ${record['manual_reason'] ?? ''}'
-        : 'In ${Fmt.time(inAt)} · Out ${Fmt.time(outAt)}';
-    return InkWell(
-      onTap: () => _manualMark(staff),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+  Widget _dayBar() {
+    return AppCard(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: 'Previous day',
+            onPressed: () => _shift(-1),
+            icon: const Icon(Icons.chevron_left_rounded),
+          ),
+          Expanded(
+            child: InkWell(
+              onTap: _pickDay,
+              borderRadius: BorderRadius.circular(10),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.calendar_today_rounded, size: 17, color: AppColors.primary),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        _isToday ? 'Today · ${Fmt.date(_day)}' : Fmt.date(_day),
+                        style: AppText.bodyStrong,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Next day',
+            onPressed: _isToday ? null : () => _shift(1),
+            icon: const Icon(Icons.chevron_right_rounded),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _attention({required int approvals, required int failed, required int flagged}) {
+    final tabs = DefaultTabController.of(context);
+    final items = [
+      if (approvals > 0)
+        _AttentionItem(
+          icon: Icons.how_to_reg_outlined,
+          color: AppColors.warning,
+          title: '$approvals staff waiting for approval',
+          subtitle: 'Check their phone and face enrollment',
+          onTap: () => tabs.animateTo(1),
+        ),
+      if (failed > 0)
+        _AttentionItem(
+          icon: Icons.gpp_bad_outlined,
+          color: AppColors.error,
+          title: '$failed failed check-in attempt${failed == 1 ? '' : 's'}',
+          subtitle: 'Possible proxy: wrong face, phone or location',
+          onTap: () => tabs.animateTo(2),
+        ),
+      if (flagged > 0)
+        _AttentionItem(
+          icon: Icons.flag_outlined,
+          color: AppColors.gold,
+          title: '$flagged check-in${flagged == 1 ? '' : 's'} flagged',
+          subtitle: 'Accepted with a note, e.g. weak face match',
+          onTap: () => setState(() => _filter = 'flagged'),
+        ),
+    ];
+    if (items.isEmpty) {
+      return const AppCard(
+        padding: EdgeInsets.all(14),
         child: Row(
           children: [
-            Avatar(initials, size: 42),
-            const SizedBox(width: 14),
+            IconBadge(Icons.verified_outlined, color: AppColors.success, size: 40),
+            SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(name, style: AppText.bodyStrong, overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 2),
+                  Text('All clear', style: AppText.bodyStrong),
+                  SizedBox(height: 2),
+                  Text('No approvals or proxy alerts waiting', style: AppText.caption),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return AppCard(
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0) const Divider(height: 1, indent: 66),
+            items[i],
+          ],
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _roster(List<Json> rows) {
+    if (rows.isEmpty) {
+      return const [
+        AppCard(
+          child: EmptyState(
+            icon: Icons.people_outline_rounded,
+            title: 'No active staff yet',
+            subtitle: 'Approve staff in the Staff tab to see them here.',
+          ),
+        ),
+      ];
+    }
+    bool flagged(Json r) => (((r['attendance'] as Map?)?['flags'] as List?) ?? const []).isNotEmpty;
+    final counts = <String, int>{
+      'all': rows.length,
+      for (final (key, _) in _statusOrder) key: rows.where((r) => r['status'] == key).length,
+      'flagged': rows.where(flagged).length,
+    };
+    final labels = {'all': 'All', for (final (k, v) in _statusOrder) k: v, 'flagged': 'Flagged'};
+    final q = _query.trim().toLowerCase();
+    final visible = rows.where((r) {
+      final match = switch (_filter) {
+        'all' => true,
+        'flagged' => flagged(r),
+        _ => r['status'] == _filter,
+      };
+      if (!match) return false;
+      if (q.isEmpty) return true;
+      final staff = (r['staff'] as Map).cast<String, dynamic>();
+      return '${staff['full_name']} ${staff['employee_id']} ${staff['department']}'
+          .toLowerCase()
+          .contains(q);
+    }).toList();
+
+    return [
+      if (rows.length > 8) ...[
+        TextField(
+          onChanged: (v) => setState(() => _query = v),
+          decoration: const InputDecoration(
+            hintText: 'Search staff',
+            prefixIcon: Icon(Icons.search_rounded),
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: 10),
+      ],
+      SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final key in labels.keys)
+              if (key == 'all' || (counts[key] ?? 0) > 0 || key == _filter)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text('${labels[key]} ${counts[key] ?? 0}'),
+                    selected: _filter == key,
+                    showCheckmark: false,
+                    onSelected: (_) => setState(() => _filter = key),
+                  ),
+                ),
+          ],
+        ),
+      ),
+      const SizedBox(height: 10),
+      if (visible.isEmpty)
+        const AppCard(
+          child: EmptyState(icon: Icons.filter_list_off_rounded, title: 'Nobody in this list'),
+        )
+      else
+        AppCard(
+          padding: EdgeInsets.zero,
+          child: Column(
+            children: [
+              for (var i = 0; i < visible.length; i++) ...[
+                if (i > 0) const Divider(height: 1, indent: 68),
+                _rosterRow(visible[i]),
+              ],
+            ],
+          ),
+        ),
+      const SizedBox(height: 12),
+      const Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.touch_app_outlined, size: 15, color: AppColors.textTertiary),
+          SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              'Tap a staff member to mark attendance manually',
+              style: AppText.caption,
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ],
+      ),
+    ];
+  }
+
+  Widget _rosterRow(Json row) {
+    final staff = (row['staff'] as Map).cast<String, dynamic>();
+    final record = (row['attendance'] as Map?)?.cast<String, dynamic>();
+    final status = row['status'] as String;
+    final flags = ((record?['flags'] as List?) ?? const []);
+    final inAt = Fmt.parse(record?['check_in_at']);
+    final outAt = Fmt.parse(record?['check_out_at']);
+    final name = staff['full_name'] as String? ?? '';
+    final meta = [
+      staff['department'],
+      staff['employee_id'],
+    ].whereType<String>().where((s) => s.isNotEmpty).join(' · ');
+    final manual = record?['is_manual'] == true;
+
+    return InkWell(
+      onTap: () => _manualMark(staff),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _StatusAvatar(initials: Fmt.initials(name), color: statusColor(status)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Text(
-                    detail,
-                    style: AppText.caption,
+                    name,
+                    style: AppText.bodyStrong,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
+                  ),
+                  if (meta.isNotEmpty) ...[
+                    const SizedBox(height: 1),
+                    Text(
+                      meta,
+                      style: AppText.caption,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 6,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      StatusChip.attendance(status, dense: true),
+                      if (inAt != null) _TimeTag(Icons.login_rounded, Fmt.time(inAt)),
+                      if (outAt != null) _TimeTag(Icons.logout_rounded, Fmt.time(outAt)),
+                      if (manual)
+                        _TimeTag(
+                          Icons.edit_note_rounded,
+                          'Manual${record?['manual_reason'] != null ? ': ${record!['manual_reason']}' : ''}',
+                        ),
+                      if (flags.isNotEmpty)
+                        StatusChip.tone(
+                          'Flagged',
+                          AppColors.warning,
+                          icon: Icons.flag_rounded,
+                          dense: true,
+                        ),
+                    ],
                   ),
                 ],
               ),
             ),
-            if (flags.isNotEmpty)
-              const Padding(
-                padding: EdgeInsets.only(right: 6),
-                child: Icon(Icons.flag_rounded, size: 18, color: AppColors.warning),
-              ),
-            StatusChip.attendance(row['status'] as String, dense: true),
+            const Padding(
+              padding: EdgeInsets.only(top: 10),
+              child: Icon(Icons.chevron_right_rounded, color: AppColors.textTertiary),
+            ),
           ],
         ),
       ),
@@ -338,6 +551,252 @@ class _RosterTabState extends ConsumerState<RosterTab> {
       if (mounted) showSnack(context, 'Attendance updated');
       _reload();
     }
+  }
+}
+
+/// Ring chart of the day's statuses with a legend of counts.
+class _SummaryCard extends StatelessWidget {
+  const _SummaryCard({
+    required this.counts,
+    required this.total,
+    required this.checkedOut,
+    required this.title,
+  });
+
+  final Map<String, int> counts;
+  final int total;
+  final int checkedOut;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final checkedIn = (counts['present'] ?? 0) + (counts['late'] ?? 0);
+    final rate = total == 0 ? 0 : (checkedIn * 100 / total).round();
+    final ring = SizedBox.square(
+      dimension: 118,
+      child: CustomPaint(
+        painter: _RingPainter([
+          for (final (key, _) in _statusOrder) (counts[key] ?? 0, statusColor(key)),
+        ]),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('$rate%', style: AppText.h1.copyWith(height: 1.1)),
+              const Text('present', style: AppText.caption),
+            ],
+          ),
+        ),
+      ),
+    );
+    final legend = Column(
+      children: [
+        for (final (key, label) in _statusOrder)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 3.5),
+            child: Row(
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(color: statusColor(key), shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: AppText.body,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Text('${counts[key] ?? 0}', style: AppText.bodyStrong),
+              ],
+            ),
+          ),
+      ],
+    );
+
+    return AppCard(
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: AppText.h3),
+          const SizedBox(height: 2),
+          Text('$checkedIn of $total staff checked in', style: AppText.caption),
+          const SizedBox(height: 14),
+          LayoutBuilder(
+            builder: (context, c) => c.maxWidth < 300
+                ? Column(children: [ring, const SizedBox(height: 14), legend])
+                : Row(
+                    children: [
+                      ring,
+                      const SizedBox(width: 22),
+                      Expanded(child: legend),
+                    ],
+                  ),
+          ),
+          const Divider(height: 26),
+          Row(
+            children: [
+              const Icon(Icons.groups_2_outlined, size: 17, color: AppColors.textSecondary),
+              const SizedBox(width: 6),
+              Text('$total staff', style: AppText.caption),
+              const SizedBox(width: 18),
+              const Icon(Icons.logout_rounded, size: 17, color: AppColors.textSecondary),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  '$checkedOut checked out',
+                  style: AppText.caption,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RingPainter extends CustomPainter {
+  _RingPainter(this.segments);
+
+  final List<(int, Color)> segments;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const stroke = 13.0;
+    final rect = (Offset.zero & size).deflate(stroke / 2);
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke;
+    canvas.drawArc(rect, 0, 2 * math.pi, false, paint..color = AppColors.surfaceMuted);
+    final total = segments.fold<int>(0, (sum, s) => sum + s.$1);
+    if (total == 0) return;
+    final parts = segments.where((s) => s.$1 > 0).length;
+    final gap = parts > 1 ? 0.05 : 0.0;
+    var start = -math.pi / 2;
+    for (final (value, color) in segments) {
+      if (value == 0) continue;
+      final sweep = 2 * math.pi * value / total;
+      canvas.drawArc(
+        rect,
+        start + gap / 2,
+        math.max(sweep - gap, 0.01),
+        false,
+        paint..color = color,
+      );
+      start += sweep;
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RingPainter old) => old.segments.toString() != segments.toString();
+}
+
+class _AttentionItem extends StatelessWidget {
+  const _AttentionItem({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+        child: Row(
+          children: [
+            IconBadge(icon, color: color, size: 40),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: AppText.bodyStrong),
+                  const SizedBox(height: 2),
+                  Text(subtitle, style: AppText.caption),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded, color: AppColors.textTertiary),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Initials avatar with a small status dot.
+class _StatusAvatar extends StatelessWidget {
+  const _StatusAvatar({required this.initials, required this.color});
+
+  final String initials;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.square(
+      dimension: 44,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Avatar(initials, size: 44),
+          Positioned(
+            right: -1,
+            bottom: -1,
+            child: Container(
+              width: 14,
+              height: 14,
+              decoration: BoxDecoration(
+                color: color,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2.5),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TimeTag extends StatelessWidget {
+  const _TimeTag(this.icon, this.text);
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 14, color: AppColors.textSecondary),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            text,
+            style: AppText.caption.copyWith(color: AppColors.textSecondary),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
+    );
   }
 }
 

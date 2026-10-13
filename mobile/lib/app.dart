@@ -53,6 +53,7 @@ class StaffAttendanceApp extends ConsumerWidget {
       theme: AppTheme.light,
       themeMode: ThemeMode.light,
       routerConfig: ref.watch(routerProvider),
+      builder: clampTextScale,
     );
   }
 }

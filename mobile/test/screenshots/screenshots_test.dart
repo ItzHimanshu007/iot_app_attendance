@@ -23,6 +23,7 @@ import 'package:staff_attendance/features/face/face_capture_screen.dart';
 import 'package:staff_attendance/features/onboarding/onboarding_screen.dart';
 import 'package:staff_attendance/features/profile/profile_screen.dart';
 import 'package:staff_attendance/features/shell/main_shell.dart';
+import 'package:staff_attendance/shared/widgets.dart';
 
 // ── Fonts ─────────────────────────────────────────────────────────────────────
 
@@ -329,12 +330,15 @@ Future<void> _shot(
   Widget child, {
   List overrides = const [],
   Future<void> Function()? after,
+  double textScale = 1.0,
 }) async {
   // Draw real elevation shadows (flutter_test normally replaces them with outlines).
   debugDisableShadows = false;
   tester.view.physicalSize = _size * 2;
   tester.view.devicePixelRatio = 2;
   addTearDown(tester.view.reset);
+  tester.platformDispatcher.textScaleFactorTestValue = textScale;
+  addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
 
   await tester.pumpWidget(
     ProviderScope(
@@ -343,7 +347,12 @@ Future<void> _shot(
         adminApiProvider.overrideWithValue(_FakeAdminApi()),
         ...overrides.cast(),
       ],
-      child: MaterialApp(debugShowCheckedModeBanner: false, theme: AppTheme.light, home: child),
+      child: MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: AppTheme.light,
+        builder: clampTextScale,
+        home: child,
+      ),
     ),
   );
   for (var i = 0; i < 6; i++) {
@@ -499,6 +508,9 @@ void main() {
     (3, '14_admin_beacons'),
     (4, '15_admin_settings'),
   ]) {
-    testWidgets(name, (t) => _shot(t, name, AdminScreen(initialTab: i), overrides: ready));
+    testWidgets(
+      name,
+      (t) => _shot(t, name, AdminScreen(embedded: true, initialTab: i), overrides: ready),
+    );
   }
 }

@@ -87,6 +87,11 @@ class StatusChip extends StatelessWidget {
   }
 }
 
+/// `MaterialApp.builder`: honours large system font sizes up to 1.2×, so
+/// screens keep their layout on phones set to large or huge text.
+Widget clampTextScale(BuildContext context, Widget? child) =>
+    MediaQuery.withClampedTextScaling(maxScaleFactor: 1.2, child: child ?? const SizedBox.shrink());
+
 // ── Surfaces ────────────────────────────────────────────────────────────────
 
 /// White rounded card with a hairline border and soft shadow.
@@ -241,7 +246,7 @@ class StatTile extends StatelessWidget {
             child: Text(value, style: AppText.number),
           ),
           const SizedBox(height: 2),
-          Text(label, style: AppText.caption, maxLines: 1, overflow: TextOverflow.ellipsis),
+          Text(label, style: AppText.caption, maxLines: 2, overflow: TextOverflow.ellipsis),
         ],
       ),
     );
