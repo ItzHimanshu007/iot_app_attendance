@@ -17,6 +17,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api import supabase_proxy
 from app.api.v1.router import v1_router
 from app.core.config import get_settings, validate_startup_config
 from app.core.exceptions import AppError
@@ -102,6 +103,7 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
 
 
 app.include_router(v1_router)
+app.include_router(supabase_proxy.router)
 
 
 @app.get("/health", tags=["infra"])
