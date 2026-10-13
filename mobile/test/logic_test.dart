@@ -3,6 +3,7 @@ import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:staff_attendance/core/config.dart';
 import 'package:staff_attendance/core/formatters.dart';
 import 'package:staff_attendance/features/attendance/attendance_api.dart';
 import 'package:staff_attendance/features/beacon/beacon_protocol.dart';
@@ -253,6 +254,16 @@ void main() {
         isNull,
       );
     });
+  });
+
+  test('sign-in goes through the backend (supabase.co is blocked on some networks)', () {
+    const render = 'https://iot-app-attendance-app.onrender.com';
+    expect(AppConfig.backendAuthUrl(render), '$render/supabase');
+    expect(AppConfig.backendAuthUrl('$render/'), '$render/supabase');
+    expect(
+      AppConfig.backendAuthUrl(' http://192.168.1.5:8000// '),
+      'http://192.168.1.5:8000/supabase',
+    );
   });
 
   group('Names (Indian staff titles)', () {

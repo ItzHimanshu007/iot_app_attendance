@@ -121,11 +121,11 @@ flutter build apk --release --dart-define-from-file=config/dev.json
 `API_URL` is your Render URL, or `http://<laptop-LAN-IP>:8000` for local testing
 (debug builds allow plain http).
 
-**Networks that block `supabase.co`:** some Indian ISPs (Jio, Airtel, ACT) blocked it in
-February 2026, and sign-in then fails with "Software caused connection abort". To avoid it,
-set `SUPABASE_URL` to `<API_URL>/supabase`, e.g. `https://your-app.onrender.com/supabase`.
-The backend then forwards the app's sign-in requests to Supabase, and the phone only ever talks
-to your backend. Keep `SUPABASE_ANON_KEY` the same. The face model
+**Sign-in goes through the backend.** Some Indian ISPs (Jio, Airtel, ACT) blocked `supabase.co`
+in February 2026, and direct sign-in then fails with "Software caused connection abort". So the
+app signs in via `<API_URL>/supabase`: the backend forwards these requests to Supabase, and the
+phone only ever talks to your backend. `SUPABASE_URL` in `dev.json` is only used if you add
+`"SUPABASE_DIRECT": "true"` to connect to Supabase directly. The face model
 `assets/models/mobilefacenet.tflite` is already included.
 
 ### 4. First admin
@@ -173,7 +173,7 @@ and the **Excel export**.
 | `BEACON_TOKEN_INVALID` | The ESP32 clock is not synced (no Wi-Fi at boot), or `TOKEN_WINDOW_SECONDS` ≠ backend `BEACON_WINDOW_SECONDS`, or the beacon secret was rotated without re-flashing. |
 | `BEACON_TOO_FAR` | Move closer, or lower the beacon's RSSI threshold in Admin → Beacons. |
 | Screen turns white during the face scan | Normal: in a dim room the screen becomes a fill light. If it still says "Too dark", face a window or tube light. |
-| Sign-in fails with "Software caused connection abort" / "Failed host lookup" for `….supabase.co` | Your mobile network blocks `supabase.co`. Set `SUPABASE_URL` to `https://<your-backend>/supabase` in `config/dev.json` and rebuild (see *Mobile app* setup). |
+| Sign-in fails with "Software caused connection abort" / "Failed host lookup" for `….supabase.co` | Your mobile network blocks `supabase.co`. Update to the latest code and rebuild: sign-in now goes through the backend. Remove `SUPABASE_DIRECT` from `config/dev.json` if you set it. |
 | "Face detection is not working on this phone (InputImageConverterError … NullPointerException)" | The release build's code shrinker (R8) removed parts of ML Kit. Fixed by `shrink=false` in `mobile/android/gradle.properties`: pull the latest code and rebuild. |
 | "The camera is not sending pictures" / "camera format not supported" | Close other apps using the camera and restart the app. If it persists, note the phone model: that phone needs a fix. |
 | `FACE_REENROLL_REQUIRED` | The face was enrolled with an older app version. Admin → Staff → *Reset face*, then enroll again. |

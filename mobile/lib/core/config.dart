@@ -5,9 +5,25 @@
 class AppConfig {
   AppConfig._();
 
-  static const String supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+  static const String supabaseProjectUrl = String.fromEnvironment('SUPABASE_URL');
   static const String supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
   static const String apiBaseUrl = String.fromEnvironment('API_URL');
+
+  /// Talk to `SUPABASE_URL` directly instead of through the backend.
+  static const bool supabaseDirect = bool.fromEnvironment('SUPABASE_DIRECT');
+
+  /// Where the app signs in. By default the backend forwards sign-in to
+  /// Supabase (`<API_URL>/supabase`), because some Indian mobile networks
+  /// block `*.supabase.co`; set `SUPABASE_DIRECT=true` to skip the backend.
+  static String get supabaseUrl => supabaseDirect ? supabaseProjectUrl : backendAuthUrl(apiBaseUrl);
+
+  static String backendAuthUrl(String apiBase) {
+    var base = apiBase.trim();
+    while (base.endsWith('/')) {
+      base = base.substring(0, base.length - 1);
+    }
+    return '$base/supabase';
+  }
 
   // ── Branding (shown before sign-in; the backend campus name is used after) ─
   static const String appName = 'Staff Attendance';
@@ -20,13 +36,10 @@ class AppConfig {
     defaultValue: 'the administration office',
   );
 
-  static bool get isConfigured =>
-      supabaseUrl.startsWith('https://') &&
-      supabaseAnonKey.isNotEmpty &&
-      apiBaseUrl.startsWith('http');
+  static bool get isConfigured => missing.isEmpty;
 
   static List<String> get missing => [
-    if (!supabaseUrl.startsWith('https://')) 'SUPABASE_URL',
+    if (supabaseDirect && !supabaseProjectUrl.startsWith('https://')) 'SUPABASE_URL',
     if (supabaseAnonKey.isEmpty) 'SUPABASE_ANON_KEY',
     if (!apiBaseUrl.startsWith('http')) 'API_URL',
   ];
