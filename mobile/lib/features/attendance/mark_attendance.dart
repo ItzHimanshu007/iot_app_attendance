@@ -345,6 +345,15 @@ class AttendanceResultScreen extends StatelessWidget {
                         size: 20,
                       ),
                     ),
+                    if (result.confidence != null) ...[
+                      const Divider(),
+                      InfoRow(
+                        icon: Icons.shield_outlined,
+                        label: 'Presence confidence',
+                        value: '${result.confidence} / 100',
+                        trailing: ConfidenceChip(result.confidence!),
+                      ),
+                    ],
                     if (result.distanceM != null) ...[
                       const Divider(),
                       InfoRow(

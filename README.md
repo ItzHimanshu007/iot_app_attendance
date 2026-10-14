@@ -55,6 +55,27 @@ Daily:  beacon in range ──► POST /attendance/challenge   (beacon token, ph
 
 See [`docs/TRANSITION_PLAN.md`](docs/TRANSITION_PLAN.md) for the full design.
 
+## Proxy Shield: what makes it hard to fake
+
+Every check-in has to pass all of these, and the server checks each one. Any
+failure is logged as a possible proxy attempt.
+
+| Layer | How it works | What it stops |
+|---|---|---|
+| **Rotating beacon code** | The ESP32 computes a new HMAC code every 30 s from a secret key. It has no network link, so there is nothing to hack. | Sharing a screenshot or recording of the beacon |
+| **Presence sandwich** | The beacon must be heard **before and after** the face scan (the code at submit is at most about 60–90 s old). | Checking in near the beacon, then walking away |
+| **Calibrated range** | Admin → Beacons → *Calibrate range*: stand at the edge of the room, and that signal becomes the limit. | Standing outside the room or behind a wall |
+| **Live face + random liveness** | On-device MobileFaceNet + ML Kit. The server picks the steps (blink, smile, turn head). | A photo, video or another person |
+| **Face replay shield** | A live scan never repeats exactly. A signature that copies an earlier check-in or an enrollment sample (similarity ≥ 0.998) is rejected. | Modified apps that resend a saved face signature |
+| **Proxy lockout** | 3 face mismatches or replays within 30 min lock check-in for that person and alert the admin. | Trying friends' faces one after another |
+| **Bound phone** | One phone per staff member; emulators rejected. | Marking for others from your own phone |
+| **GPS + fake-GPS detection** | Off / flag / enforce, inside the campus radius. | Checking in from home |
+| **Presence confidence** | Every check-in gets a 0–100 score (face margin, signal, freshness, GPS, flags), shown to staff and in the admin roster. | Borderline check-ins go unnoticed |
+
+Run [`supabase/migrations/20261014000000_proxy_shield.sql`](supabase/migrations/20261014000000_proxy_shield.sql)
+once in the SQL editor to store recent check-in signatures for the replay shield. Without it, the
+shield only compares against the enrollment samples.
+
 ## Face recognition accuracy
 
 **How this was measured:**
@@ -176,6 +197,9 @@ and the **Excel export**.
 | Sign-in fails with "Software caused connection abort" / "Failed host lookup" for `….supabase.co` | Your mobile network blocks `supabase.co`. Update to the latest code and rebuild: sign-in now goes through the backend. Remove `SUPABASE_DIRECT` from `config/dev.json` if you set it. |
 | "Face detection is not working on this phone (InputImageConverterError … NullPointerException)" | The release build's code shrinker (R8) removed parts of ML Kit. Fixed by `shrink=false` in `mobile/android/gradle.properties`: pull the latest code and rebuild. |
 | "The camera is not sending pictures" / "camera format not supported" | Close other apps using the camera and restart the app. If it persists, note the phone model: that phone needs a fix. |
+| `PRESENCE_LOST` | The phone stopped hearing the beacon during the face scan. Stay near the beacon until verification finishes. |
+| `PROXY_LOCKED` | 3 failed face checks in 30 minutes. Wait until the time shown, or the admin marks attendance manually. |
+| `FACE_REPLAY` | A copied face signature was sent instead of a live scan (modified app). Logged for the admin. |
 | `FACE_REENROLL_REQUIRED` | The face was enrolled with an older app version. Admin → Staff → *Reset face*, then enroll again. |
 | `FACE_MISMATCH` for the right person | Better light, no mask/cap. Check the scores in Admin → Alerts and adjust the threshold (default 0.55), or reset and re-enroll the face. |
 | Changed phone → `DEVICE_ALREADY_BOUND` | Admin → Staff → *Reset bound phone*. |

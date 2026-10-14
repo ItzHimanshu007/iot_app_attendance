@@ -25,12 +25,13 @@ from typing import Any
 from app.core.config import get_settings
 from app.core.exceptions import ConflictError, ValidationError, VerificationError
 from app.core.timeutil import campus_zone, is_late, local_today, now_utc, parse_time, parse_ts
+from app.repositories.attempt_repo import AttemptRepository
 from app.repositories.attendance_repo import AttendanceRepository
 from app.repositories.beacon_repo import BeaconRepository
 from app.repositories.challenge_repo import ChallengeRepository
 from app.schemas.requests import BeaconReading, ChallengeRequest, SubmitRequest
 from app.security.auth import CurrentStaff
-from app.services import campus_service, device_service, face_service, geofence
+from app.services import campus_service, confidence, device_service, face_service, geofence
 from app.services.attempt_service import record_attempt
 from app.services.beacon_token import verify_token
 from app.services.liveness import pick_steps
@@ -38,6 +39,12 @@ from app.services.liveness import pick_steps
 _attendance = AttendanceRepository()
 _beacons = BeaconRepository()
 _challenges = ChallengeRepository()
+_attempts = AttemptRepository()
+
+# Failures that count towards the proxy lockout (someone else's face, or a
+# copied signature). Ordinary mistakes like "too far" or "already checked in"
+# do not count.
+LOCKOUT_CODES = frozenset({"FACE_MISMATCH", "FACE_REPLAY"})
 
 WEAK_MATCH_MARGIN = 0.05
 DEFAULT_WORK_START = time(9, 0)
@@ -71,12 +78,15 @@ def public_record(row: dict[str, Any] | None) -> dict[str, Any] | None:
 # ── Shared checks ─────────────────────────────────────────────────────────────
 
 
-def _verify_beacon(reading: BeaconReading, past_windows: int) -> dict[str, Any]:
+def _verify_beacon(
+    reading: BeaconReading, past_windows: int, *, check_rssi: bool = True
+) -> tuple[dict[str, Any], int]:
+    """Registered beacon + valid rotating token; returns (beacon, token age in windows)."""
     settings = get_settings()
     beacon = _beacons.get_by_id(str(reading.beacon_id))
     if beacon is None or not beacon.get("is_active", False):
         raise VerificationError("This beacon is not registered on campus.", "BEACON_UNKNOWN")
-    if reading.rssi < int(beacon.get("rssi_threshold", -85)):
+    if check_rssi and reading.rssi < int(beacon.get("rssi_threshold", -85)):
         raise VerificationError(
             "The beacon signal is too weak. Move closer to the beacon.", "BEACON_TOO_FAR"
         )
@@ -93,7 +103,34 @@ def _verify_beacon(reading: BeaconReading, past_windows: int) -> dict[str, Any]:
             "The beacon code is invalid or expired. Stay near the beacon and try again.",
             "BEACON_TOKEN_INVALID",
         )
-    return beacon
+    return beacon, age
+
+
+def _check_lockout(staff_id: str, now: datetime) -> None:
+    """Too many face mismatches/replays recently → check-in locked for a while."""
+    settings = get_settings()
+    window = timedelta(minutes=settings.lockout_minutes)
+    recent = _attempts.list_attempts(
+        (now - window).isoformat(),
+        (now + timedelta(seconds=1)).isoformat(),
+        success=False,
+        staff_id=staff_id,
+    )
+    failures = sorted(
+        ts
+        for a in recent
+        if a.get("reason_code") in LOCKOUT_CODES and (ts := parse_ts(a.get("created_at")))
+    )
+    if len(failures) < settings.lockout_failures:
+        return
+    # Unlocks when the oldest failure that still counts leaves the window.
+    unlock = failures[-settings.lockout_failures] + window
+    tz = campus_zone(campus_service.get_campus().get("timezone"))
+    raise VerificationError(
+        f"Check-in is locked after {len(failures)} failed face checks. Try again after "
+        f"{unlock.astimezone(tz).strftime('%H:%M')}. Your administrator has been alerted.",
+        "PROXY_LOCKED",
+    )
 
 
 def _check_action_allowed(action: str, record: dict[str, Any] | None) -> None:
@@ -137,9 +174,10 @@ def create_challenge(staff: CurrentStaff, req: ChallengeRequest, ip: str | None)
     }
     try:
         _check_physical(req.is_physical_device)
+        _check_lockout(staff.id, now)
         device_service.require_bound_device(staff.id, req.device_fingerprint)
         face_service.require_approved(staff.id)
-        beacon = _verify_beacon(req.beacon, settings.beacon_challenge_past_windows)
+        beacon, _age = _verify_beacon(req.beacon, settings.beacon_challenge_past_windows)
         _check_action_allowed(req.action, _attendance.get_for_day(staff.id, today))
 
         steps = pick_steps(settings.liveness_steps_count)
@@ -215,12 +253,23 @@ def submit(staff: CurrentStaff, req: SubmitRequest, ip: str | None) -> dict[str,
             raise VerificationError("Phone changed during verification.", "DEVICE_MISMATCH")
         device = device_service.require_bound_device(staff.id, req.device_fingerprint)
 
-        # 3. Still near the same beacon.
+        # 3. Presence sandwich: the same beacon heard again AFTER the face scan.
+        #    Proximity was checked at the challenge; a fresh token now proves the
+        #    phone never left. (The signal is not re-checked: holding the phone up
+        #    for the selfie weakens it.)
         if str(req.beacon.beacon_id) != str(challenge["beacon_id"]):
             raise VerificationError(
                 "Beacon changed during verification. Please start again.", "BEACON_MISMATCH"
             )
-        beacon = _verify_beacon(req.beacon, settings.beacon_submit_past_windows)
+        beacon, token_age = _verify_beacon(
+            req.beacon, settings.beacon_submit_past_windows, check_rssi=False
+        )
+        if token_age > settings.beacon_presence_max_windows:
+            raise VerificationError(
+                "You moved away from the beacon during verification. Stay near it until "
+                "verification finishes.",
+                "PRESENCE_LOST",
+            )
 
         # 4. Liveness: the exact random steps, in order.
         expected_steps = [str(s) for s in challenge.get("liveness_steps") or []]
@@ -255,9 +304,22 @@ def submit(staff: CurrentStaff, req: SubmitRequest, ip: str | None) -> dict[str,
         raise
 
     device_service.touch(device["id"])
+    face_service.remember_probe(staff.id, req.embedding)
     with contextlib.suppress(Exception):
         _beacons.update(beacon["id"], {"last_used_at": now.isoformat()})
     record_attempt(staff.id, f"submit_{action}", True, None, None, **log)
+
+    trust = confidence.presence_confidence(
+        face_score=score,
+        face_threshold=threshold,
+        rssi=req.beacon.rssi,
+        rssi_threshold=beacon.get("rssi_threshold"),
+        distance_m=geo.distance_m,
+        radius_m=campus.get("radius_m"),
+        accuracy_m=req.location.accuracy_m if req.location else None,
+        flags=flags,
+        token_age=token_age,
+    )
 
     return {
         "action": action,
@@ -269,6 +331,8 @@ def submit(staff: CurrentStaff, req: SubmitRequest, ip: str | None) -> dict[str,
             "distance_m": geo.distance_m,
             "geofence_mode": geo.mode,
             "flags": flags,
+            "confidence": trust,
+            "confidence_level": confidence.level(trust),
         },
     }
 

@@ -188,6 +188,11 @@ class _FakeAdminApi implements AdminApi {
               'department': 'Engineering',
             },
             'status': p.$3,
+            'confidence': switch (p.$3) {
+              'present' => p.$1 == 'Vikram Singh' ? 76 : 93,
+              'late' => 64,
+              _ => null,
+            },
             'attendance': p.$3 == 'not_marked'
                 ? null
                 : {
@@ -458,6 +463,8 @@ void main() {
           faceScore: 0.87,
           flags: const [],
           distanceM: 120,
+          confidence: 94,
+          confidenceLevel: 'high',
           beaconName: 'Staff Room · Block A',
         ),
       ),

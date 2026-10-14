@@ -140,7 +140,10 @@ table: staff can read their own profile/device/attendance, and sensitive tables
 | Marking from home / outside campus | No beacon in range → button locked; server re-checks the rotating token; GPS geofence |
 | Friend forwards a screenshot of the beacon token | Token rotates every 30 s, is bound to the beacon ID, and the challenge expires in 2 minutes. Face + device are still required. |
 | Fake GPS app | `isMocked` → rejected (`MOCK_LOCATION`) |
-| Friend uses your phone | Face match fails |
+| Friend uses your phone | Face match fails; 3 failures in 30 min lock check-in (`PROXY_LOCKED`) |
+| Check in near the beacon, then walk away during the face scan | Presence sandwich: a fresh beacon code is required after the scan (`PRESENCE_LOST`) |
+| Standing outside the room / behind a wall | Per-beacon signal limit set with *Calibrate range* at the edge of the room |
+| Modified app resends a saved face signature | Replay shield: near-identical to an earlier probe or enrollment sample → `FACE_REPLAY` |
 | Holding up your photo/video | Random liveness steps chosen by the server, the face must stay the same through the whole challenge, and the face captured at the end must match the face that did the steps (signature check on the phone) |
 | Friend logs into your account on their phone | Device binding (one phone, admin reset needed to change) |
 | Friend enrolls *their* face on your account | Admin approval + duplicate-face check against every other approved staff member |

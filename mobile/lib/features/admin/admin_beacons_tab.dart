@@ -7,6 +7,7 @@ import '../../core/formatters.dart';
 import '../../core/theme/colors.dart';
 import '../../core/theme/typography.dart';
 import '../../shared/widgets.dart';
+import '../beacon/beacon_controller.dart';
 import 'admin_api.dart';
 
 /// ESP32 beacons and their firmware configuration.
@@ -153,6 +154,13 @@ class _BeaconsTabState extends ConsumerState<BeaconsTab> {
             ),
             item(
               ctx,
+              'calibrate',
+              Icons.straighten_rounded,
+              'Calibrate range',
+              'Stand at the edge of the room and set the signal limit',
+            ),
+            item(
+              ctx,
               'toggle',
               active ? Icons.toggle_off_outlined : Icons.toggle_on_outlined,
               active ? 'Disable beacon' : 'Enable beacon',
@@ -170,6 +178,17 @@ class _BeaconsTabState extends ConsumerState<BeaconsTab> {
         case 'firmware':
           final secret = await api.beaconSecret(id);
           if (mounted) await _showFirmware(secret);
+        case 'calibrate':
+          if (!mounted) return;
+          final saved = await showModalBottomSheet<int>(
+            context: context,
+            isScrollControlled: true,
+            builder: (_) => _CalibrateSheet(beacon: b),
+          );
+          if (saved != null) {
+            _reload();
+            if (mounted) showSnack(context, 'Signal limit set to $saved dBm');
+          }
         case 'toggle':
           await api.updateBeacon(id, {'is_active': !active});
           _reload();
@@ -324,6 +343,128 @@ class _CreateBeaconSheetState extends ConsumerState<_CreateBeaconSheet> {
             onPressed: _create,
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Live signal reading for one beacon; the admin stands at the farthest spot
+/// that should still count and saves that as the beacon's signal limit.
+/// Anyone farther away, or behind a wall, then gets "Too far from the beacon".
+class _CalibrateSheet extends ConsumerStatefulWidget {
+  const _CalibrateSheet({required this.beacon});
+
+  final Json beacon;
+
+  @override
+  ConsumerState<_CalibrateSheet> createState() => _CalibrateSheetState();
+}
+
+class _CalibrateSheetState extends ConsumerState<_CalibrateSheet> {
+  /// Below this the beacon would hardly be usable; above it you'd have to touch it.
+  static const _min = -100, _max = -40, _margin = 3;
+
+  final List<int> _samples = [];
+  DateTime? _lastSeen;
+  bool _saving = false;
+
+  String get _id => widget.beacon['id'] as String;
+
+  @override
+  void initState() {
+    super.initState();
+    ref.read(beaconControllerProvider.notifier).start();
+  }
+
+  /// Median of the last readings (single readings jump by ±5 dB).
+  int? get _signal {
+    if (_samples.length < 5) return null;
+    final sorted = [..._samples]..sort();
+    return sorted[sorted.length ~/ 2];
+  }
+
+  Future<void> _save(int limit) async {
+    setState(() => _saving = true);
+    try {
+      await ref.read(adminApiProvider).updateBeacon(_id, {'rssi_threshold': limit});
+      if (mounted) Navigator.pop(context, limit);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        showSnack(context, errorMessage(e), error: true);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(beaconControllerProvider, (_, next) {
+      final adv = next.byId(_id);
+      if (adv == null || adv.seenAt == _lastSeen) return;
+      _lastSeen = adv.seenAt;
+      setState(() {
+        _samples.add(adv.rssi);
+        if (_samples.length > 15) _samples.removeAt(0);
+      });
+    });
+    final signal = _signal;
+    final current = (widget.beacon['rssi_threshold'] as num?)?.round() ?? -85;
+    final limit = signal == null ? null : (signal - _margin).clamp(_min, _max);
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(22, 4, 22, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('Calibrate range', style: AppText.h2),
+            const SizedBox(height: 6),
+            Text(
+              'Stand at the farthest spot that should still count, for example just inside '
+              'the door. Anyone farther away or behind a wall will be "too far".',
+              style: AppText.body,
+            ),
+            const SizedBox(height: 18),
+            AppCard(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  if (signal != null)
+                    SignalBars(rssi: signal)
+                  else
+                    const SizedBox.square(
+                      dimension: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2.4),
+                    ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          signal == null ? 'Listening to the beacon…' : '$signal dBm here',
+                          style: AppText.h3,
+                        ),
+                        Text(
+                          '${_samples.length} readings · current limit ≥ $current dBm',
+                          style: AppText.caption,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            PrimaryButton(
+              label: limit == null ? 'Waiting for readings…' : 'Set limit to $limit dBm',
+              icon: Icons.check_rounded,
+              busy: _saving,
+              onPressed: limit == null ? null : () => _save(limit),
+            ),
+          ],
+        ),
       ),
     );
   }

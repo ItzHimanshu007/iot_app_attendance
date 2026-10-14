@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     beacon_challenge_past_windows: int = 1
     # How many past windows are accepted at submit time (covers the camera step).
     beacon_submit_past_windows: int = 5
+    # "Presence sandwich": the beacon must be heard again AFTER the face scan.
+    # The token sent at submit may be at most this many windows old.
+    beacon_presence_max_windows: int = 2
     # Future windows accepted (ESP32 clock running slightly ahead).
     beacon_future_windows: int = 1
     # Number of random liveness steps the user must perform.
@@ -61,6 +64,15 @@ class Settings(BaseSettings):
     face_enroll_consistency_threshold: float = 0.45
     # Reject submissions from emulators.
     block_emulators: bool = True
+    # Face replay shield: a live scan this similar to an earlier one (or to an
+    # enrollment sample) is a copied signature. Genuine frames seconds apart
+    # measured at most 0.993; an exact copy is 1.0.
+    face_replay_similarity: float = 0.998
+    face_probe_history: int = 30
+    # Proxy lockout: this many face mismatches/replays within the window lock
+    # check-in for that staff member until the window has passed.
+    lockout_failures: int = 3
+    lockout_minutes: int = 30
 
     model_config = {
         "env_file": ".env",

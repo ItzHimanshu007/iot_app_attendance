@@ -28,6 +28,7 @@ class ErrorText {
     'BEACON_TOKEN_INVALID',
     'BEACON_TOO_FAR',
     'BEACON_MISMATCH',
+    'PRESENCE_LOST',
     'LOCATION_REQUIRED',
     'NETWORK_ERROR',
     'TIMEOUT',
@@ -66,6 +67,23 @@ class ErrorText {
       'Beacon changed',
       Icons.bluetooth_disabled,
       'Stay near the same beacon during verification.',
+    ),
+    'PRESENCE_LOST': ErrorText(
+      'You left the beacon area',
+      Icons.bluetooth_disabled,
+      'The beacon is checked before and after the face scan. Stay near it until '
+          'verification finishes.',
+    ),
+    'FACE_REPLAY': ErrorText(
+      'Face scan rejected',
+      Icons.gpp_bad_outlined,
+      'Only a live camera scan is accepted. This attempt was reported to the administrator.',
+    ),
+    'PROXY_LOCKED': ErrorText(
+      'Check-in locked',
+      Icons.lock_clock_outlined,
+      'Too many failed face checks. Wait until the time shown, or ask the administrator '
+          'to mark your attendance.',
     ),
     'MOCK_LOCATION': ErrorText(
       'Fake location detected',

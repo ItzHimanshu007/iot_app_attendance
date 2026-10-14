@@ -10,11 +10,12 @@ from app.core.timeutil import campus_zone, local_today, now_utc
 from app.repositories.attempt_repo import AttemptRepository
 from app.repositories.attendance_repo import AttendanceRepository
 from app.repositories.audit_repo import AuditRepository
+from app.repositories.beacon_repo import BeaconRepository
 from app.repositories.face_repo import FaceTemplateRepository
 from app.repositories.staff_repo import StaffRepository
 from app.schemas.requests import ManualAttendance
 from app.security.auth import CurrentStaff
-from app.services import campus_service, device_service, face_service
+from app.services import campus_service, confidence, device_service, face_service
 from app.services.attempt_service import audit
 from app.services.attendance_service import public_record
 from app.services.staff_service import next_step, public_profile
@@ -24,6 +25,7 @@ _faces = FaceTemplateRepository()
 _attendance = AttendanceRepository()
 _attempts = AttemptRepository()
 _audit = AuditRepository()
+_beacons = BeaconRepository()
 
 ROSTER_STATUSES = ("present", "late", "absent", "on_leave", "not_marked")
 
@@ -154,6 +156,22 @@ def day_roster(day: date | None) -> dict[str, Any]:
     target = (day or local_today(tz)).isoformat()
     records = {r["staff_id"]: r for r in _attendance.list_range(target, target)}
 
+    thresholds = {b["id"]: b.get("rssi_threshold") for b in _beacons.list_beacons()}
+
+    def trust(record: dict[str, Any] | None) -> int | None:
+        if not record or record.get("is_manual") or not record.get("check_in_at"):
+            return None
+        return confidence.presence_confidence(
+            face_score=record.get("check_in_face_score"),
+            face_threshold=float(campus.get("face_match_threshold") or 0.55),
+            rssi=record.get("check_in_rssi"),
+            rssi_threshold=thresholds.get(record.get("check_in_beacon_id")),
+            distance_m=record.get("check_in_distance_m"),
+            radius_m=campus.get("radius_m"),
+            accuracy_m=record.get("check_in_accuracy_m"),
+            flags=[f for f in record.get("flags") or [] if not f.startswith("checkout_")],
+        )
+
     rows = []
     summary = dict.fromkeys(ROSTER_STATUSES, 0)
     summary.update(total=0, checked_out=0, flagged=0)
@@ -171,6 +189,7 @@ def day_roster(day: date | None) -> dict[str, Any]:
                 "staff": public_profile(staff),
                 "status": status,
                 "attendance": public_record(record),
+                "confidence": trust(record),
             }
         )
     rows.sort(key=lambda r: (ROSTER_STATUSES.index(r["status"]), r["staff"]["full_name"]))

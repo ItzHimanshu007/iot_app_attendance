@@ -123,6 +123,8 @@ class SubmitResult {
     required this.flags,
     this.distanceM,
     this.beaconName,
+    this.confidence,
+    this.confidenceLevel,
   });
 
   final String action;
@@ -131,6 +133,10 @@ class SubmitResult {
   final List<String> flags;
   final double? distanceM;
   final String? beaconName;
+
+  /// Presence confidence 0-100 (how comfortably every check passed).
+  final int? confidence;
+  final String? confidenceLevel;
 
   factory SubmitResult.fromJson(Map<String, dynamic> json) {
     final v = json['verification'] as Map<String, dynamic>;
@@ -141,6 +147,8 @@ class SubmitResult {
       flags: ((v['flags'] as List?) ?? const []).map((e) => e.toString()).toList(),
       distanceM: (v['distance_m'] as num?)?.toDouble(),
       beaconName: (v['beacon'] as Map?)?['name'] as String?,
+      confidence: (v['confidence'] as num?)?.round(),
+      confidenceLevel: v['confidence_level'] as String?,
     );
   }
 }
