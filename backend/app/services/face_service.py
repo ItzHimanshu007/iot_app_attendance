@@ -6,14 +6,19 @@ from typing import Any
 
 from app.core.config import get_settings
 from app.core.exceptions import ConflictError, ValidationError, VerificationError
+from app.core.logging import get_logger
+from app.repositories.face_probe_repo import FaceProbeRepository
 from app.repositories.face_repo import FaceTemplateRepository
 from app.schemas.requests import FaceEnroll
 from app.security.auth import CurrentStaff
 from app.services import campus_service, device_service
 from app.services.attempt_service import record_attempt
-from app.services.face_matching import best_match, min_pairwise_similarity, normalize
+from app.services.face_matching import best_match, cosine, min_pairwise_similarity, normalize
+
+logger = get_logger(__name__)
 
 _repo = FaceTemplateRepository()
+_probes = FaceProbeRepository()
 
 
 def public_face(row: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -139,7 +144,43 @@ def match(staff_id: str, embedding: list[float], model_version: str | None = Non
             "Face model changed — update the app and ask an admin to reset your face.",
             "EMBEDDING_DIM_MISMATCH",
         )
+    _check_replay(staff_id, probe, template["embeddings"])
     return best_match(probe, template["embeddings"])
+
+
+# ── Replay shield ─────────────────────────────────────────────────────────────
+
+
+def _check_replay(staff_id: str, probe: list[float], enrolled: list[list[float]]) -> None:
+    """Reject a signature copied from an earlier scan.
+
+    Two live camera scans are never identical (pose, light and sensor noise
+    differ), so a probe that is a near-exact copy of an enrollment sample or
+    of an earlier check-in was replayed by a modified app, not captured live.
+    """
+    limit = get_settings().face_replay_similarity
+    for sample in [*enrolled, *_recent_probes(staff_id)]:
+        if len(sample) == len(probe) and cosine(probe, normalize(sample)) >= limit:
+            raise VerificationError(
+                "This face scan is a copy of an earlier one. Scan your face live with the camera.",
+                "FACE_REPLAY",
+            )
+
+
+def _recent_probes(staff_id: str) -> list[list[float]]:
+    try:
+        return _probes.recent(staff_id, get_settings().face_probe_history)
+    except Exception as e:  # history unavailable (e.g. migration not run) must not block
+        logger.warning("Face replay history unavailable", error=str(e))
+        return []
+
+
+def remember_probe(staff_id: str, embedding: list[float]) -> None:
+    """Store an accepted live signature so a later copy of it is caught."""
+    try:
+        _probes.add(staff_id, [round(v, 6) for v in normalize(embedding)])
+    except Exception as e:
+        logger.warning("Could not store face probe", error=str(e))
 
 
 def require_approved(staff_id: str) -> dict[str, Any]:

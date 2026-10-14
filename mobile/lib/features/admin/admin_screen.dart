@@ -476,6 +476,7 @@ class _RosterTabState extends ConsumerState<RosterTab> {
       staff['employee_id'],
     ].whereType<String>().where((s) => s.isNotEmpty).join(' · ');
     final manual = record?['is_manual'] == true;
+    final trust = (row['confidence'] as num?)?.round();
 
     return InkWell(
       onTap: () => _manualMark(staff),
@@ -512,6 +513,7 @@ class _RosterTabState extends ConsumerState<RosterTab> {
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       StatusChip.attendance(status, dense: true),
+                      if (trust != null) ConfidenceChip(trust, showScore: true),
                       if (inAt != null) _TimeTag(Icons.login_rounded, Fmt.time(inAt)),
                       if (outAt != null) _TimeTag(Icons.logout_rounded, Fmt.time(outAt)),
                       if (manual)

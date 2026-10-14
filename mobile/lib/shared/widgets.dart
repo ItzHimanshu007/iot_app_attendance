@@ -92,6 +92,29 @@ class StatusChip extends StatelessWidget {
 Widget clampTextScale(BuildContext context, Widget? child) =>
     MediaQuery.withClampedTextScaling(maxScaleFactor: 1.2, child: child ?? const SizedBox.shrink());
 
+/// Presence confidence (0-100) as a coloured chip: High / Medium / Low.
+class ConfidenceChip extends StatelessWidget {
+  const ConfidenceChip(this.score, {super.key, this.showScore = false});
+
+  final int score;
+  final bool showScore;
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color) = score >= 80
+        ? ('High', AppColors.success)
+        : score >= 60
+        ? ('Medium', AppColors.warning)
+        : ('Low', AppColors.error);
+    return StatusChip.tone(
+      showScore ? 'Trust $score' : label,
+      color,
+      icon: Icons.shield_outlined,
+      dense: true,
+    );
+  }
+}
+
 // ── Surfaces ────────────────────────────────────────────────────────────────
 
 /// White rounded card with a hairline border and soft shadow.
